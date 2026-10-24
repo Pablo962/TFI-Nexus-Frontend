@@ -25,6 +25,8 @@ export const ProtectedAction: React.FC<ProtectedActionProps> = ({
     return <>{fallback}</>;
   }
 
+  const disabledText = `Acción restringida. Requiere permiso: ${permission}. Haz clic para iniciar sesión como Administrador.`;
+
   return (
     <div
       onClick={(e) => {
@@ -35,9 +37,11 @@ export const ProtectedAction: React.FC<ProtectedActionProps> = ({
           openLoginModal();
         }
       }}
-      title={`Acción restringida. Requiere permiso: ${permission}. Haz clic para iniciar sesión como Administrador.`}
+      title={disabledText}
+      aria-label={disabledText}
       className="inline-block opacity-60 cursor-not-allowed"
     >
+      <span className="sr-only">{disabledText}</span>
       {children}
     </div>
   );

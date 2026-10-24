@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserAvatar } from './UserAvatar';
 import { UserProfileMenu } from './UserProfileMenu';
 
 interface HeaderProps {
@@ -8,6 +7,7 @@ interface HeaderProps {
   onSelectCampus: (campus: string) => void;
   onToggleMobileSidebar?: () => void;
   isSidebarCollapsed?: boolean;
+  onOpenCommandPalette?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -15,6 +15,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectCampus,
   onToggleMobileSidebar,
   isSidebarCollapsed = false,
+  onOpenCommandPalette,
 }) => {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
@@ -83,43 +84,60 @@ export const Header: React.FC<HeaderProps> = ({
     <header
       className={`fixed top-0 left-0 ${
         isSidebarCollapsed ? 'lg:left-20' : 'lg:left-72'
-      } right-0 h-20 bg-surface-container-lowest/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)] z-30 px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3 sm:gap-6 border-b border-outline-variant/30 transition-all duration-300 ease-in-out`}
+      } right-0 h-16 bg-surface-container-lowest/85 backdrop-blur-md z-30 px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3 sm:gap-6 border-b border-outline-variant/40 transition-all duration-300 ease-in-out`}
     >
       {/* Mobile Menu Button + Search Bar */}
-      <div className="flex items-center gap-2 sm:gap-3 flex-1 max-w-2xl">
+      <div className="flex items-center gap-2 sm:gap-3 flex-1 max-w-xl">
         <button
           type="button"
           onClick={onToggleMobileSidebar}
-          className="lg:hidden p-2.5 rounded-xl bg-surface-container-low hover:bg-surface-container text-on-surface transition-colors cursor-pointer shrink-0"
+          className="lg:hidden p-2 rounded-lg text-outline hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer shrink-0"
           title="Abrir menú de navegación"
           aria-label="Abrir menú"
         >
-          <span className="material-symbols-outlined text-2xl">menu</span>
+          <span className="material-symbols-outlined text-xl">menu</span>
         </button>
 
         <div className="relative flex items-center w-full">
-          <span className="material-symbols-outlined absolute left-3.5 text-outline pointer-events-none text-[20px]">
+          <span className="material-symbols-outlined absolute left-3 text-outline/80 pointer-events-none text-[18px]">
             search
           </span>
           <input
             type="text"
             value={searchQuery}
+            onClick={() => onOpenCommandPalette?.()}
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setShowSearchResults(true);
             }}
-            onFocus={() => setShowSearchResults(true)}
+            onFocus={() => {
+              if (onOpenCommandPalette) {
+                onOpenCommandPalette();
+              } else {
+                setShowSearchResults(true);
+              }
+            }}
             onBlur={() => setTimeout(() => setShowSearchResults(false), 200)}
-            placeholder="Buscar empleados, puestos, habilidades o cursos..."
-            className="w-full pl-10 pr-4 py-2 bg-surface-container-low text-on-surface placeholder:text-outline rounded-xl text-xs sm:text-sm outline-none focus:bg-surface-container-lowest focus:ring-2 focus:ring-primary/20 transition-all border border-transparent focus:border-outline-variant/40"
+            placeholder="Buscar puestos, personas, módulos..."
+            className="w-full pl-9 pr-16 py-1.5 bg-surface-container-low text-on-surface placeholder:text-outline text-xs sm:text-sm rounded-lg outline-none border border-outline-variant/50 focus:border-primary/50 focus:bg-surface-container-lowest transition-all"
           />
+          {onOpenCommandPalette && (
+            <button
+              type="button"
+              onClick={onOpenCommandPalette}
+              className="absolute right-2 px-1.5 py-0.5 rounded bg-surface-container text-[10px] font-mono font-semibold text-outline hover:text-on-surface border border-outline-variant/40 transition-all cursor-pointer hidden sm:flex items-center gap-0.5"
+              title="Abrir buscador rápido (Ctrl+K)"
+            >
+              <span>Ctrl+K</span>
+            </button>
+          )}
         </div>
 
         {/* Live Search Quick Results Dropdown */}
         {showSearchResults && searchQuery.trim().length > 0 && (
-          <div className="absolute top-full left-4 sm:left-6 right-4 sm:right-6 max-w-2xl mt-2 bg-surface-container-lowest rounded-2xl shadow-xl border border-outline-variant/40 p-2 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-outline px-3 py-1.5">
-              Accesos Rápidos Encontrados
+          <div className="absolute top-full left-4 sm:left-6 right-4 sm:right-6 max-w-xl mt-1.5 bg-surface-container-lowest rounded-xl shadow-lg border border-outline-variant/40 p-1.5 z-50 animate-in fade-in duration-100">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-outline px-3 py-1">
+              Accesos Rápidos
             </div>
             {filteredLinks.length > 0 ? (
               filteredLinks.map((item, idx) => (
@@ -130,15 +148,15 @@ export const Header: React.FC<HeaderProps> = ({
                     setSearchQuery('');
                     setShowSearchResults(false);
                   }}
-                  className="w-full text-left px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold text-on-surface hover:bg-surface-container-low hover:text-primary transition-colors flex items-center justify-between cursor-pointer"
+                  className="w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium text-on-surface hover:bg-surface-container-low hover:text-primary transition-colors flex items-center justify-between cursor-pointer"
                 >
                   <span>{item.label}</span>
-                  <span className="text-xs text-primary font-bold">Ir a la sección →</span>
+                  <span className="text-[11px] text-primary font-semibold">Ir →</span>
                 </button>
               ))
             ) : (
-              <div className="px-3 py-3 text-xs sm:text-sm text-on-surface-variant">
-                No se encontraron resultados para &quot;{searchQuery}&quot;. Probá con otro nombre o palabra clave.
+              <div className="px-3 py-2 text-xs text-on-surface-variant">
+                No se encontraron resultados para &quot;{searchQuery}&quot;.
               </div>
             )}
           </div>
@@ -147,30 +165,23 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Controls */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-        {/* Current Date Badge */}
-        <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-surface-container-low rounded-xl text-on-surface border border-outline-variant/25">
-          <span className="material-symbols-outlined text-primary text-[18px]">
+        {/* Current Date Minimalist */}
+        <div className="hidden xl:flex items-center gap-1.5 text-xs text-outline font-medium px-2 py-1">
+          <span className="material-symbols-outlined text-[16px] text-outline/80">
             calendar_today
           </span>
-          <div className="flex flex-col text-left">
-            <span className="text-[9px] text-outline font-black uppercase tracking-wider leading-none">
-              Hoy
-            </span>
-            <span className="text-xs font-bold text-on-surface leading-tight mt-0.5">
-              {formattedCurrentDate}
-            </span>
-          </div>
+          <span>{formattedCurrentDate}</span>
         </div>
 
-        {/* Campus Selector */}
-        <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-low rounded-xl text-on-surface border border-outline-variant/20 hover:border-outline-variant/40 transition-colors">
-          <span className="material-symbols-outlined text-outline text-[18px]">
+        {/* Campus Selector Minimalist */}
+        <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 bg-surface-container-low rounded-lg text-on-surface border border-outline-variant/40 hover:border-outline-variant/70 transition-colors">
+          <span className="material-symbols-outlined text-outline text-[16px]">
             domain
           </span>
           <select
             value={selectedCampus}
             onChange={(e) => onSelectCampus(e.target.value)}
-            className="bg-transparent text-xs font-bold text-on-surface outline-none cursor-pointer"
+            className="bg-transparent text-xs font-semibold text-on-surface outline-none cursor-pointer"
             aria-label="Seleccionar sede u oficina"
           >
             <option value="Campus Central">Campus Central</option>
@@ -185,66 +196,66 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={() => setShowNotifications(!showNotifications)}
-            className="relative h-10 w-10 flex items-center justify-center rounded-xl bg-surface-container-low text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-all cursor-pointer"
-            title="Ver avisos y notificaciones"
+            className="relative h-8 w-8 flex items-center justify-center rounded-lg text-outline hover:text-on-surface hover:bg-surface-container transition-all cursor-pointer"
+            title="Ver notificaciones"
             aria-label="Notificaciones"
           >
-            <span className="material-symbols-outlined text-[20px]">notifications</span>
+            <span className="material-symbols-outlined text-[19px]">notifications</span>
             {unreadCount > 0 && (
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary ring-2 ring-surface-container-lowest" />
+              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" />
             )}
           </button>
 
           {/* Notifications Dropdown Panel */}
           {showNotifications && (
             <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)} aria-hidden="true" />
-            <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-surface-container-lowest rounded-2xl shadow-xl border border-outline-variant/40 p-4 z-50 animate-in fade-in duration-150">
-              <div className="flex items-center justify-between pb-3 border-b border-outline-variant/20 mb-3">
-                <div className="flex items-center gap-2">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-on-surface">
-                    Avisos del Sistema
-                  </h4>
+              <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)} aria-hidden="true" />
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-surface-container-lowest rounded-xl shadow-lg border border-outline-variant/40 p-3 z-50 animate-in fade-in duration-100">
+                <div className="flex items-center justify-between pb-2 border-b border-outline-variant/20 mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-xs font-bold text-on-surface">
+                      Notificaciones
+                    </h4>
+                    {unreadCount > 0 && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded-full bg-primary/10 text-primary">
+                        {unreadCount}
+                      </span>
+                    )}
+                  </div>
                   {unreadCount > 0 && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                      {unreadCount} nuevos
-                    </span>
+                    <button
+                      onClick={markAllAsRead}
+                      className="text-[11px] font-medium text-primary hover:underline cursor-pointer"
+                    >
+                      Marcar leídas
+                    </button>
                   )}
                 </div>
-                {unreadCount > 0 && (
-                  <button
-                    onClick={markAllAsRead}
-                    className="text-[11px] font-bold text-primary hover:underline cursor-pointer"
-                  >
-                    Marcar leídos
-                  </button>
-                )}
-              </div>
 
-              <div className="space-y-2 max-h-80 overflow-y-auto">
-                {notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    onClick={() => {
-                      setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, unread: false } : x)));
-                      navigate(n.path);
-                      setShowNotifications(false);
-                    }}
-                    className={`p-3 rounded-xl cursor-pointer transition-colors text-left ${
-                      n.unread
-                        ? 'bg-primary/5 hover:bg-primary/10 border-l-3 border-primary'
-                        : 'bg-surface-container-low/50 hover:bg-surface-container'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-bold text-on-surface">{n.title}</span>
-                      <span className="text-[10px] text-outline">{n.time}</span>
+                <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                  {notifications.map((n) => (
+                    <div
+                      key={n.id}
+                      onClick={() => {
+                        setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, unread: false } : x)));
+                        navigate(n.path);
+                        setShowNotifications(false);
+                      }}
+                      className={`p-2.5 rounded-lg cursor-pointer transition-colors text-left ${
+                        n.unread
+                          ? 'bg-primary/5 hover:bg-primary/10 border-l-2 border-primary'
+                          : 'hover:bg-surface-container-low'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-xs font-semibold text-on-surface">{n.title}</span>
+                        <span className="text-[10px] text-outline">{n.time}</span>
+                      </div>
+                      <p className="text-[11px] text-on-surface-variant leading-snug">{n.desc}</p>
                     </div>
-                    <p className="text-[11px] text-on-surface-variant leading-snug">{n.desc}</p>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
             </>
           )}
         </div>

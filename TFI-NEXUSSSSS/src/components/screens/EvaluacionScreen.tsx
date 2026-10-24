@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ScreenId } from '../../types';
-import { EMPLOYEES_DATA } from '../../data/mockData';
 import { UserAvatar } from '../UserAvatar';
-import { ConfirmationModal } from '../ConfirmationModal';
 import { QuickGuideBanner } from '../QuickGuideBanner';
-import { HelpTooltip } from '../HelpTooltip';
+import { useToast } from '../ToastProvider';
+import { useFocusTrap } from '../useFocusTrap';
 import { evaluationsApi } from '../../services/api';
 
 interface EvaluacionScreenProps {
@@ -12,7 +11,7 @@ interface EvaluacionScreenProps {
   onSelectEmployee?: (employeeId: string) => void;
 }
 
-interface EvaluationRecord {
+export interface EvaluationRecord {
   id: string;
   employeeName: string;
   role: string;
@@ -30,108 +29,122 @@ interface EvaluationRecord {
   performanceScore: number; // 1-5
 }
 
+const INITIAL_RECORDS: EvaluationRecord[] = [
+  {
+    id: 'lucas',
+    employeeName: 'Ing. Lucas Valenzuela',
+    role: 'Arquitecto Principal de Plataforma y Nube',
+    area: 'Infraestructura y Plataforma',
+    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
+    evaluator: 'Martín Krause (VP de Ingeniería)',
+    selfScore: 4.8,
+    managerScore: 4.7,
+    peersScore: 4.75,
+    calibratedScore: 4.74,
+    box9: 'Talento Destacado (Estrella)',
+    status: 'Calibrado',
+    gapAnalysis: 'Superávit en Alta Disponibilidad y Resiliencia; oportunidad leve en gestión de costos en la nube.',
+    potentialScore: 4.9,
+    performanceScore: 4.8,
+  },
+  {
+    id: 'sofia',
+    employeeName: 'Sofía Méndez',
+    role: 'Líder de Ingeniería en Inteligencia Artificial',
+    area: 'Algoritmos de Inteligencia Artificial',
+    avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80',
+    evaluator: 'Elena Rostova (Directora de Inteligencia Artificial)',
+    selfScore: 4.9,
+    managerScore: 4.85,
+    peersScore: 4.95,
+    calibratedScore: 4.9,
+    box9: 'Talento Destacado (Estrella)',
+    status: 'Calibrado',
+    gapAnalysis: 'Liderazgo técnico referente; elegible a Ingeniero Principal.',
+    potentialScore: 5.0,
+    performanceScore: 4.9,
+  },
+  {
+    id: 'marcos',
+    employeeName: 'Marcos Varela',
+    role: 'Ingeniero Principal de Datos',
+    area: 'Plataformas de Datos y Procesamiento en Tiempo Real',
+    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&auto=format&fit=crop&q=80',
+    evaluator: 'Lucas Valenzuela (Arquitecto Principal de Plataforma)',
+    selfScore: 4.5,
+    managerScore: 4.6,
+    peersScore: 4.4,
+    calibratedScore: 4.55,
+    box9: 'Especialista Clave',
+    status: 'Calibrado',
+    gapAnalysis: 'Desempeño técnico sobresaliente en procesamiento de eventos y datos; reforzar la mentoría entre equipos.',
+    potentialScore: 4.2,
+    performanceScore: 4.7,
+  },
+  {
+    id: 'gabriel',
+    employeeName: 'Gabriel Pardo',
+    role: 'Especialista en Operaciones de Desarrollo e IA',
+    area: 'Operaciones de IA e Infraestructura de Cómputo',
+    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80',
+    evaluator: 'Sofía Méndez (Líder de IA)',
+    selfScore: 4.2,
+    managerScore: 4.1,
+    peersScore: 4.3,
+    calibratedScore: 4.18,
+    box9: 'Alto Potencial',
+    status: 'En Revisión',
+    gapAnalysis: 'Progreso acelerado en orquestación Ray; brecha moderada en seguridad clúster.',
+    potentialScore: 4.6,
+    performanceScore: 4.1,
+  },
+  {
+    id: 'laura',
+    employeeName: 'Lic. Laura Benítez',
+    role: 'Arquitecto de Seguridad y Accesos',
+    area: 'Ciberseguridad y Cumplimiento Normativo',
+    avatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=400&auto=format&fit=crop&q=80',
+    evaluator: 'Martín Krause (VP de Ingeniería)',
+    selfScore: 4.6,
+    managerScore: 4.4,
+    peersScore: 4.5,
+    calibratedScore: 4.48,
+    box9: 'Desempeño Sólido',
+    status: 'Pendiente Comité',
+    gapAnalysis: 'Cero incidentes críticos de seguridad; revisión de banda salarial pendiente.',
+    potentialScore: 4.3,
+    performanceScore: 4.5,
+  },
+];
+
 export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
   onNavigate,
   onSelectEmployee,
 }) => {
-  const [selectedCycle, setSelectedCycle] = useState('Ciclo Anual 2026 (Calibración Q4)');
-  const [selectedFilter, setSelectedFilter] = useState<'all' | 'calibrated' | 'pending'>('all');
-  const [activeTab, setActiveTab] = useState<'list' | '9box' | 'committee'>('list');
+  const { showToast } = useToast();
+  const [records, setRecords] = useState<EvaluationRecord[]>(INITIAL_RECORDS);
   const [selectedRecordId, setSelectedRecordId] = useState<string>('lucas');
+  const [selectedCycle, setSelectedCycle] = useState<string>('Ciclo Anual 2026 (Calibración Q4)');
+  const [selectedFilter, setSelectedFilter] = useState<'all' | 'calibrated' | 'pending'>('all');
   const [showCalibrateModal, setShowCalibrateModal] = useState<boolean>(false);
-  const [showConfirmApproval, setShowConfirmApproval] = useState<boolean>(false);
   const [calibrationScore, setCalibrationScore] = useState<number>(4.75);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [calibrationNotes, setCalibrationNotes] = useState<string>(
+    'Se valida consistencia en entregables de alta disponibilidad y aporte a la estabilidad de la plataforma durante Q4.'
+  );
+  const [showConfirmApproval, setShowConfirmApproval] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'list' | '9box' | 'committee'>('list');
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
-  const [records, setRecords] = useState<EvaluationRecord[]>([
-    {
-      id: 'lucas',
-      employeeName: 'Ing. Lucas Valenzuela',
-      role: 'Arquitecto Principal de Plataforma y Nube',
-      area: 'Infraestructura y Plataforma',
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
-      evaluator: 'Martín Krause (VP de Ingeniería)',
-      selfScore: 4.8,
-      managerScore: 4.7,
-      peersScore: 4.75,
-      calibratedScore: 4.74,
-      box9: 'Talento Destacado (Estrella)',
-      status: 'Calibrado',
-      gapAnalysis: 'Superávit en Alta Disponibilidad y Resiliencia; oportunidad leve en gestión de costos en la nube.',
-      potentialScore: 4.9,
-      performanceScore: 4.8,
-    },
-    {
-      id: 'sofia',
-      employeeName: 'Sofía Méndez',
-      role: 'Líder de Ingeniería en Inteligencia Artificial',
-      area: 'Algoritmos de Inteligencia Artificial',
-      avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80',
-      evaluator: 'Elena Rostova (Directora de Inteligencia Artificial)',
-      selfScore: 4.9,
-      managerScore: 4.85,
-      peersScore: 4.95,
-      calibratedScore: 4.9,
-      box9: 'Talento Destacado (Estrella)',
-      status: 'Calibrado',
-      gapAnalysis: 'Liderazgo técnico referente; elegible a Ingeniero Principal.',
-      potentialScore: 5.0,
-      performanceScore: 4.9,
-    },
-    {
-      id: 'marcos',
-      employeeName: 'Marcos Varela',
-      role: 'Ingeniero Principal de Datos',
-      area: 'Plataformas de Datos y Procesamiento en Tiempo Real',
-      avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&auto=format&fit=crop&q=80',
-      evaluator: 'Lucas Valenzuela (Arquitecto Principal de Plataforma)',
-      selfScore: 4.5,
-      managerScore: 4.6,
-      peersScore: 4.4,
-      calibratedScore: 4.55,
-      box9: 'Especialista Clave',
-      status: 'Calibrado',
-      gapAnalysis: 'Desempeño técnico sobresaliente en procesamiento de eventos y datos; reforzar la mentoría entre equipos.',
-      potentialScore: 4.2,
-      performanceScore: 4.7,
-    },
-    {
-      id: 'gabriel',
-      employeeName: 'Gabriel Pardo',
-      role: 'Especialista en Operaciones de Desarrollo e IA',
-      area: 'Operaciones de IA e Infraestructura de Cómputo',
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80',
-      evaluator: 'Sofía Méndez (Líder de IA)',
-      selfScore: 4.2,
-      managerScore: 4.1,
-      peersScore: 4.3,
-      calibratedScore: 4.18,
-      box9: 'Alto Potencial',
-      status: 'En Revisión',
-      gapAnalysis: 'Progreso acelerado en orquestación Ray; brecha moderada en seguridad clúster.',
-      potentialScore: 4.6,
-      performanceScore: 4.1,
-    },
-    {
-      id: 'laura',
-      employeeName: 'Lic. Laura Benítez',
-      role: 'Arquitecto de Seguridad y Accesos',
-      area: 'Ciberseguridad y Cumplimiento Normativo',
-      avatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=400&auto=format&fit=crop&q=80',
-      evaluator: 'Martín Krause (VP de Ingeniería)',
-      selfScore: 4.6,
-      managerScore: 4.4,
-      peersScore: 4.5,
-      calibratedScore: 4.48,
-      box9: 'Desempeño Sólido',
-      status: 'Pendiente Comité',
-      gapAnalysis: 'Cero incidentes críticos de seguridad; revisión de banda salarial pendiente.',
-      potentialScore: 4.3,
-      performanceScore: 4.5,
-    },
-  ]);
+  const [sortConfig, setSortConfig] = useState<{
+    key: 'employeeName' | 'calibratedScore' | 'status';
+    direction: 'asc' | 'desc';
+  }>({
+    key: 'calibratedScore',
+    direction: 'desc',
+  });
 
-  const activeRecord = records.find((r) => r.id === selectedRecordId) || records[0];
+  const calibrateModalRef = useFocusTrap<HTMLDivElement>(showCalibrateModal);
+  const approvalModalRef = useFocusTrap<HTMLDivElement>(showConfirmApproval);
 
   useEffect(() => {
     let isMounted = true;
@@ -151,7 +164,7 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
                 : d.id.includes('sofia')
                 ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80'
                 : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80'),
-            evaluator: 'Comité de Calibración Q4',
+            evaluator: d.evaluator || 'Comité de Calibración Q4',
             selfScore: d.selfScore ?? 4.5,
             managerScore: d.managerScore ?? 4.6,
             peersScore: d.peersScore ?? 4.4,
@@ -166,95 +179,199 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
         }
       })
       .catch(() => {
-        // Fallback en memoria
+        // Fallback local en memoria
       });
     return () => {
       isMounted = false;
     };
   }, []);
 
-  const triggerToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
-  };
+  const activeRecord: EvaluationRecord = useMemo(() => {
+    return records.find((r) => r.id === selectedRecordId) || records[0];
+  }, [records, selectedRecordId]);
 
   const handleSaveCalibration = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await evaluationsApi.calibrate(activeRecord.id, {
-        calibratedScore: calibrationScore,
-        box9: activeRecord.box9,
-        notes: `Calibrado por Comité a ${calibrationScore}`,
-      });
-    } catch {
-      // Fallback silencioso
+    let updatedBox9 = activeRecord.box9;
+    if (calibrationScore >= 4.7) {
+      updatedBox9 = 'Talento Destacado (Estrella)';
+    } else if (calibrationScore >= 4.4) {
+      updatedBox9 = 'Alto Potencial';
+    } else if (calibrationScore >= 4.0) {
+      updatedBox9 = 'Desempeño Sólido';
     }
 
-    setRecords((prev) =>
-      prev.map((r) =>
-        r.id === activeRecord.id
-          ? { ...r, calibratedScore: calibrationScore, status: 'Calibrado' }
-          : r
-      )
-    );
+    try {
+      const res = await evaluationsApi.calibrate(activeRecord.id, {
+        calibratedScore: calibrationScore,
+        box9: updatedBox9,
+        notes: calibrationNotes,
+      });
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === activeRecord.id
+            ? {
+                ...r,
+                calibratedScore: calibrationScore,
+                box9: updatedBox9,
+                status: 'Calibrado',
+              }
+            : r
+        )
+      );
+      showToast(
+        res?.message ||
+          `Calibración de ${activeRecord.employeeName} actualizada a ${calibrationScore.toFixed(2)}.`,
+        'success'
+      );
+    } catch {
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === activeRecord.id
+            ? {
+                ...r,
+                calibratedScore: calibrationScore,
+                box9: updatedBox9,
+                status: 'Calibrado',
+              }
+            : r
+        )
+      );
+      showToast(
+        `Calibración de ${activeRecord.employeeName} actualizada a ${calibrationScore.toFixed(2)}.`,
+        'success'
+      );
+    }
     setShowCalibrateModal(false);
-    triggerToast(
-      `Calibración de ${activeRecord.employeeName} guardada con puntaje consensuado de ${calibrationScore}.`
-    );
+  };
+
+  const handleApproveAll = async () => {
+    setRecords((prev) => prev.map((r) => ({ ...r, status: 'Calibrado' as const })));
+    showToast('Ciclo de calibración aprobado exitosamente.', 'success');
+    setShowConfirmApproval(false);
+  };
+
+  const handleExport9Box = async () => {
+    setIsExporting(true);
+    try {
+      await evaluationsApi.download9Box('xlsx');
+      showToast('Matriz 9-Box descargada exitosamente en formato Excel.', 'success');
+    } catch {
+      showToast('Matriz 9-Box exportada (modo local).', 'info');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleSort = (key: 'employeeName' | 'calibratedScore' | 'status') => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc',
+    }));
   };
 
   const filteredRecords = records.filter((r) => {
     if (selectedFilter === 'calibrated') return r.status === 'Calibrado';
-    if (selectedFilter === 'pending') return r.status !== 'Calibrado';
+    if (selectedFilter === 'pending')
+      return r.status === 'Pendiente Comité' || r.status === 'En Revisión';
     return true;
   });
 
+  const orderedRecords = [...filteredRecords].sort((a, b) => {
+    const { key, direction } = {
+      key: sortConfig.key,
+      direction: sortConfig.direction === 'asc' ? 1 : -1,
+    };
+
+    if (key === 'employeeName') {
+      return a.employeeName.localeCompare(b.employeeName) * direction;
+    }
+
+    if (key === 'status') {
+      return a.status.localeCompare(b.status) * direction;
+    }
+
+    return (a.calibratedScore - b.calibratedScore) * direction;
+  });
+
+  // Métricas dinámicas calculadas 100% desde los datos
+  const totalRecords = records.length;
+  const totalEvaluated = records.filter((r) => r.status === 'Calibrado').length;
+
+  const avgPerformance = useMemo(() => {
+    if (records.length === 0) return '0.00';
+    const sum = records.reduce((acc, r) => acc + (r.calibratedScore || 0), 0);
+    return (sum / records.length).toFixed(2);
+  }, [records]);
+
+  const starTalentCount = useMemo(() => {
+    return records.filter(
+      (r) => r.box9 === 'Talento Destacado (Estrella)' || r.calibratedScore >= 4.7
+    ).length;
+  }, [records]);
+
+  const pendingCalibrationCount = useMemo(() => {
+    return records.filter((r) => r.status !== 'Calibrado').length;
+  }, [records]);
+
+  // Función de consulta dinámica para la Matriz 9-Box
+  const getEmployeesForBox = (
+    perfTier: 'low' | 'med' | 'high',
+    potTier: 'low' | 'med' | 'high'
+  ) => {
+    return records.filter((r) => {
+      const perf = r.performanceScore ?? r.calibratedScore;
+      const pot = r.potentialScore ?? r.calibratedScore;
+      const matchPerf =
+        perfTier === 'high' ? perf >= 4.6 : perfTier === 'med' ? perf >= 4.1 && perf < 4.6 : perf < 4.1;
+      const matchPot =
+        potTier === 'high' ? pot >= 4.6 : potTier === 'med' ? pot >= 4.1 && pot < 4.6 : pot < 4.1;
+      return matchPerf && matchPot;
+    });
+  };
+
+  // Curva estadística de distribución de comité
+  const countEstrella = starTalentCount;
+  const countSolido = records.filter(
+    (r) => r.calibratedScore >= 4.2 && r.calibratedScore < 4.7
+  ).length;
+  const countAcomp = records.filter((r) => r.calibratedScore < 4.2).length;
+
+  const pctEstrella = totalRecords > 0 ? ((countEstrella / totalRecords) * 100).toFixed(1) : '0.0';
+  const pctSolido = totalRecords > 0 ? ((countSolido / totalRecords) * 100).toFixed(1) : '0.0';
+  const pctAcomp = totalRecords > 0 ? ((countAcomp / totalRecords) * 100).toFixed(1) : '0.0';
+
   return (
     <div className="w-full px-6 lg:px-8 py-6 flex flex-col gap-6 pb-20">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-inverse-surface text-inverse-on-surface px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-outline-variant/30 animate-in fade-in slide-in-from-bottom-3 duration-200">
-          <span className="material-symbols-outlined text-secondary-container">verified</span>
-          <span className="text-sm font-semibold">{toastMessage}</span>
-        </div>
-      )}
-
-      {/* Compact Header & Controls */}
+      {/* Header & Global Actions */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-1">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs uppercase tracking-wider text-primary font-bold font-headline">
-              Crecimiento y Resultados &bull; Desempeño
-            </span>
-            <span className="text-outline-variant">•</span>
-            <span className="text-xs text-on-surface-variant font-medium">
-              Calificaciones y matriz de talento
-            </span>
-            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-              142 evaluados
-            </span>
-          </div>
-          <h1 className="text-xl lg:text-2xl font-black text-on-surface tracking-tight font-headline">
-            Evaluación de Desempeño y Matriz de Talento
+          <h1 className="text-xl lg:text-2xl font-bold text-on-surface tracking-tight font-headline">
+            Evaluación de Desempeño
           </h1>
+          <p className="text-xs text-on-surface-variant font-medium mt-0.5">
+            {records.length} colaboradores en ciclo de evaluación 360° y matriz de talento
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <select
             value={selectedCycle}
             onChange={(e) => setSelectedCycle(e.target.value)}
-            className="px-3 py-1.5 rounded-xl text-xs font-bold bg-surface-container text-on-surface border border-outline-variant/40 outline-none cursor-pointer"
+            className="px-3 py-1.5 rounded-xl text-xs font-medium bg-surface-container text-on-surface border border-outline-variant/40 outline-none cursor-pointer"
           >
             <option value="Ciclo Anual 2026 (Calibración Q4)">Ciclo Anual 2026 (Activo)</option>
             <option value="Mid-Year Review 2026">Revisión Mid-Year 2026</option>
             <option value="Ciclo Anual 2025">Ciclo Anterior 2025</option>
           </select>
           <button
+            type="button"
             onClick={() => setShowConfirmApproval(true)}
-            className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-primary text-on-primary hover:bg-primary-container transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-primary text-on-primary hover:bg-primary-container transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            title="Cerrar y aprobar las calibraciones del ciclo oficial"
           >
             <span className="material-symbols-outlined text-[16px]">assignment_turned_in</span>
-            Aprobar Evaluaciones
+            <span>Aprobar Evaluaciones</span>
           </button>
         </div>
       </div>
@@ -271,205 +388,210 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
         dismissible={true}
       />
 
-      {/* Compact 4-Metric Status Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-        <div className="bg-surface-container-lowest px-3.5 py-2.5 rounded-xl border border-outline-variant/30 flex items-center justify-between shadow-2xs">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-outline block">Colaboradores Evaluados</span>
-            <div className="text-base font-black text-on-surface">
-              142 <span className="text-[11px] font-normal text-outline">/ 156</span>
-            </div>
+      {/* Clean 4-Metric Status Strip - Calculado 100% dinámicamente desde datos */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-surface-container-lowest px-4 py-3 rounded-xl border border-outline-variant/30 flex flex-col gap-1 shadow-2xs">
+          <span className="text-xs text-on-surface-variant font-medium">Colaboradores calibrados</span>
+          <div className="text-xl font-bold text-on-surface">
+            {totalEvaluated}{' '}
+            <span className="text-xs font-normal text-outline">/ {totalRecords} finalizados</span>
           </div>
-          <span className="px-2 py-0.5 rounded-md bg-secondary-container/40 text-on-secondary-container text-[10px] font-bold">
-            91% avance
-          </span>
         </div>
 
-        <div className="bg-surface-container-lowest px-3.5 py-2.5 rounded-xl border border-outline-variant/30 flex items-center justify-between shadow-2xs">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-outline block">Promedio Desempeño</span>
-            <div className="text-base font-black text-primary">
-              4.62 <span className="text-[11px] font-normal text-outline">/ 5.0</span>
-            </div>
+        <div className="bg-surface-container-lowest px-4 py-3 rounded-xl border border-outline-variant/30 flex flex-col gap-1 shadow-2xs">
+          <span className="text-xs text-on-surface-variant font-medium">Promedio desempeño</span>
+          <div className="text-xl font-bold text-primary">
+            {avgPerformance} <span className="text-xs font-normal text-outline">/ 5.0</span>
           </div>
-          <span className="px-2 py-0.5 rounded-md bg-primary-fixed text-primary text-[10px] font-bold">
-            Equilibrado
-          </span>
         </div>
 
-        <div className="bg-surface-container-lowest px-3.5 py-2.5 rounded-xl border border-outline-variant/30 flex items-center justify-between shadow-2xs">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-outline block">Talento Destacado</span>
-            <div className="text-base font-black text-on-secondary-container">
-              18 <span className="text-[11px] font-bold text-on-secondary-container">estrellas</span>
-            </div>
+        <div className="bg-surface-container-lowest px-4 py-3 rounded-xl border border-outline-variant/30 flex flex-col gap-1 shadow-2xs">
+          <span className="text-xs text-on-surface-variant font-medium">Talento destacado</span>
+          <div className="text-xl font-bold text-emerald-600">
+            {starTalentCount} <span className="text-xs font-normal text-outline">estrellas</span>
           </div>
-          <span className="px-2 py-0.5 rounded-md bg-secondary-container/30 text-on-secondary-container text-[10px] font-bold">
-            12% elegibles
-          </span>
         </div>
 
-        <div className="bg-surface-container-lowest px-3.5 py-2.5 rounded-xl border border-outline-variant/30 flex items-center justify-between shadow-2xs">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-outline block">Pendientes de Calibrar</span>
-            <div className="text-base font-black text-tertiary">
-              14 <span className="text-[11px] font-bold text-tertiary">casos</span>
-            </div>
+        <div className="bg-surface-container-lowest px-4 py-3 rounded-xl border border-outline-variant/30 flex flex-col gap-1 shadow-2xs">
+          <span className="text-xs text-on-surface-variant font-medium">Pendientes de calibrar</span>
+          <div className="text-xl font-bold text-amber-600">
+            {pendingCalibrationCount} <span className="text-xs font-normal text-outline">casos</span>
           </div>
-          <span className="px-2 py-0.5 rounded-md bg-error-container/40 text-tertiary text-[10px] font-bold">
-            Comité Sesión 2
-          </span>
         </div>
       </div>
 
       {/* Tabs Selector: Vista Lista 360°, Matriz 9-Box, Sesión de Comité */}
-      <div className="flex items-center gap-2 border-b border-outline-variant/30 pb-2">
+      <div className="flex items-center gap-1.5 bg-surface-container-low p-1.5 rounded-2xl border border-outline-variant/20 shadow-2xs">
         <button
+          type="button"
           onClick={() => setActiveTab('list')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+          className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
             activeTab === 'list'
-              ? 'bg-primary text-on-primary shadow-xs'
-              : 'text-on-surface-variant hover:bg-surface-container-high'
+              ? 'bg-surface-container-lowest text-primary shadow-xs ring-1 ring-primary/20 font-semibold'
+              : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
           }`}
         >
-          <span className="material-symbols-outlined text-sm">fact_check</span>
-          Fichas 360° ({filteredRecords.length})
+          <span className="material-symbols-outlined text-[16px]">fact_check</span>
+          <span>Fichas 360° ({filteredRecords.length})</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveTab('9box')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+          className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
             activeTab === '9box'
-              ? 'bg-primary text-on-primary shadow-xs'
-              : 'text-on-surface-variant hover:bg-surface-container-high'
+              ? 'bg-surface-container-lowest text-primary shadow-xs ring-1 ring-primary/20 font-semibold'
+              : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
           }`}
         >
-          <span className="material-symbols-outlined text-sm">grid_view</span>
-          Matriz de 9 Cajas (Desempeño vs Potencial)
+          <span className="material-symbols-outlined text-[16px]">grid_view</span>
+          <span>Matriz de 9 Cajas (9-Box)</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveTab('committee')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+          className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
             activeTab === 'committee'
-              ? 'bg-primary text-on-primary shadow-xs'
-              : 'text-on-surface-variant hover:bg-surface-container-high'
+              ? 'bg-surface-container-lowest text-primary shadow-xs ring-1 ring-primary/20 font-semibold'
+              : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
           }`}
         >
-          <span className="material-symbols-outlined text-sm">groups</span>
-          Comité de Calibración y Distribución Obligatoria
+          <span className="material-symbols-outlined text-[16px]">groups</span>
+          <span>Comité de Calibración</span>
         </button>
       </div>
 
       {/* TAB 1: Lista de Evaluaciones 360° */}
       {activeTab === 'list' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Columna Izquierda: Listado */}
           <div className="lg:col-span-7 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-1 bg-surface-container-low p-1 rounded-xl border border-outline-variant/20">
                 <button
+                  type="button"
                   onClick={() => setSelectedFilter('all')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                     selectedFilter === 'all'
-                      ? 'bg-surface-container-highest text-primary font-black'
+                      ? 'bg-surface-container-lowest text-primary font-semibold shadow-2xs'
                       : 'text-outline hover:text-on-surface'
                   }`}
                 >
                   Todos ({records.length})
                 </button>
                 <button
+                  type="button"
                   onClick={() => setSelectedFilter('calibrated')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                     selectedFilter === 'calibrated'
-                      ? 'bg-surface-container-highest text-primary font-black'
+                      ? 'bg-surface-container-lowest text-primary font-semibold shadow-2xs'
                       : 'text-outline hover:text-on-surface'
                   }`}
                 >
-                  Calibrados
+                  Calibrados ({totalEvaluated})
                 </button>
                 <button
+                  type="button"
                   onClick={() => setSelectedFilter('pending')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                     selectedFilter === 'pending'
-                      ? 'bg-surface-container-highest text-primary font-black'
+                      ? 'bg-surface-container-lowest text-primary font-semibold shadow-2xs'
                       : 'text-outline hover:text-on-surface'
                   }`}
                 >
-                  Pendientes
+                  Pendientes ({pendingCalibrationCount})
                 </button>
               </div>
-              <span className="text-xs text-outline">Ponderación: Líder 50% &bull; Pares 30% &bull; Auto 20%</span>
+
+              {/* Sorting toolbar */}
+              <div className="flex items-center gap-2 text-xs text-outline">
+                <span>Ordenar:</span>
+                <button
+                  type="button"
+                  onClick={() => handleSort('calibratedScore')}
+                  className={`px-2.5 py-1 rounded-lg border flex items-center gap-1 cursor-pointer transition-all ${
+                    sortConfig.key === 'calibratedScore'
+                      ? 'bg-surface-container border-primary text-primary font-semibold'
+                      : 'border-outline-variant/30 hover:border-outline-variant text-on-surface'
+                  }`}
+                >
+                  <span>Puntaje</span>
+                  {sortConfig.key === 'calibratedScore' && (
+                    <span className="material-symbols-outlined text-[14px]">
+                      {sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSort('employeeName')}
+                  className={`px-2.5 py-1 rounded-lg border flex items-center gap-1 cursor-pointer transition-all ${
+                    sortConfig.key === 'employeeName'
+                      ? 'bg-surface-container border-primary text-primary font-semibold'
+                      : 'border-outline-variant/30 hover:border-outline-variant text-on-surface'
+                  }`}
+                >
+                  <span>Nombre</span>
+                  {sortConfig.key === 'employeeName' && (
+                    <span className="material-symbols-outlined text-[14px]">
+                      {sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                    </span>
+                  )}
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">
-              {filteredRecords.map((r) => {
-                const isSelected = selectedRecordId === r.id;
+              {orderedRecords.map((record) => {
+                const isSelected = activeRecord.id === record.id;
+                const isCalibrated = record.status === 'Calibrado';
+
                 return (
                   <div
-                    key={r.id}
-                    onClick={() => setSelectedRecordId(r.id)}
-                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col gap-2.5 ${
+                    key={record.id}
+                    onClick={() => setSelectedRecordId(record.id)}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col gap-2.5 ${
                       isSelected
-                        ? 'bg-surface-container-lowest border-primary ring-2 ring-primary/20 shadow-xs'
+                        ? 'bg-surface-container-lowest border-primary ring-1 ring-primary/30 shadow-xs'
                         : 'bg-surface-container-lowest hover:bg-surface-container-low border-outline-variant/30'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <UserAvatar
-                          name={r.employeeName}
-                          size="md"
-                          shape="rounded"
-                        />
-                        <div>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <UserAvatar name={record.employeeName} size="md" shape="rounded" />
+                        <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <h3 className="text-sm font-extrabold text-on-surface">
-                              {r.employeeName}
+                            <h3 className="text-sm font-semibold text-on-surface truncate">
+                              {record.employeeName}
                             </h3>
-                            <span
-                              className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                                r.status === 'Calibrado'
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : 'bg-amber-100 text-amber-800'
-                              }`}
-                            >
-                              {r.status}
+                            <span className="flex items-center gap-1 text-xs text-on-surface-variant font-medium shrink-0">
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  isCalibrated ? 'bg-emerald-500' : 'bg-amber-500'
+                                }`}
+                              />
+                              {record.status}
                             </span>
                           </div>
-                          <p className="text-xs text-outline">{r.role}</p>
-                          <span className="text-[11px] text-primary font-semibold">{r.area}</span>
+                          <p className="text-xs text-outline truncate">{record.role}</p>
+                          <p className="text-xs text-outline font-normal mt-0.5 truncate">
+                            {record.area}
+                          </p>
                         </div>
                       </div>
 
-                      <div className="text-right">
-                        <span className="text-xl font-black text-primary">
-                          {r.calibratedScore}
-                        </span>
-                        <span className="block text-[10px] text-outline uppercase font-semibold">
-                          Puntaje 360°
-                        </span>
+                      <div className="text-right shrink-0">
+                        <div className="text-lg font-bold text-primary">
+                          {record.calibratedScore.toFixed(2)}
+                        </div>
+                        <span className="text-xs text-outline font-normal">Puntaje final</span>
                       </div>
                     </div>
 
-                    {/* Breakdown 360 */}
-                    <div className="grid grid-cols-4 gap-2 text-center text-xs pt-2 border-t border-outline-variant/20">
-                      <div className="p-1.5 bg-surface-container rounded-xl">
-                        <span className="text-[10px] text-outline block">Autoevaluación</span>
-                        <strong className="text-on-surface">{r.selfScore}</strong>
-                      </div>
-                      <div className="p-1.5 bg-surface-container rounded-xl">
-                        <span className="text-[10px] text-outline block">Evaluación Líder</span>
-                        <strong className="text-on-surface">{r.managerScore}</strong>
-                      </div>
-                      <div className="p-1.5 bg-surface-container rounded-xl">
-                        <span className="text-[10px] text-outline block">Pares (Feedback)</span>
-                        <strong className="text-on-surface">{r.peersScore}</strong>
-                      </div>
-                      <div className="p-1.5 bg-primary/10 text-primary rounded-xl">
-                        <span className="text-[10px] font-bold block">9 Cajas</span>
-                        <strong className="text-[11px] truncate block">{r.box9}</strong>
-                      </div>
+                    <div className="flex items-center justify-between pt-2 border-t border-outline-variant/20 text-xs">
+                      <span className="text-on-surface-variant font-medium">{record.box9}</span>
+                      <span className="text-outline">Evaluador: {record.evaluator}</span>
                     </div>
                   </div>
                 );
@@ -477,72 +599,104 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
             </div>
           </div>
 
-          {/* Columna Derecha: Inspector Detallado de Evaluación */}
+          {/* Columna Derecha: Ficha 360° Detalle */}
           <div className="lg:col-span-5 flex flex-col gap-6">
             <div className="bg-surface-container-lowest p-5 rounded-2xl border border-outline-variant/30 shadow-2xs sticky top-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <UserAvatar
-                    name={activeRecord.employeeName}
-                    size="xl"
-                    shape="rounded"
-                  />
-                  <div>
-                    <h3 className="text-base font-extrabold text-on-surface">
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <UserAvatar name={activeRecord.employeeName} size="lg" shape="rounded" />
+                  <div className="min-w-0">
+                    <h3 className="text-base font-bold text-on-surface truncate">
                       {activeRecord.employeeName}
                     </h3>
-                    <p className="text-xs text-outline">{activeRecord.role}</p>
-                    <span className="text-xs font-bold text-primary">{activeRecord.box9}</span>
+                    <p className="text-xs text-outline truncate">{activeRecord.role}</p>
+                    <p className="text-xs text-primary font-medium mt-0.5 truncate">
+                      {activeRecord.area}
+                    </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl font-black text-primary">
-                    {activeRecord.calibratedScore}
+
+                <div className="text-right shrink-0">
+                  <div className="text-2xl font-bold text-primary">
+                    {activeRecord.calibratedScore.toFixed(2)}
                   </div>
-                  <span className="text-[10px] text-outline uppercase font-bold">Consenso Final</span>
+                  <span className="text-xs text-outline">Escala 1 a 5</span>
                 </div>
               </div>
 
-              {/* Evaluators Info */}
-              <div className="p-3 bg-surface-container rounded-2xl text-xs space-y-1 mb-4">
-                <div className="flex justify-between">
-                  <span className="text-outline">Líder Evaluador:</span>
-                  <span className="font-semibold text-on-surface">{activeRecord.evaluator}</span>
+              {/* Comparativo de Calificaciones 360° */}
+              <div className="grid grid-cols-3 gap-2 p-3 bg-surface-container-low rounded-xl text-center text-xs border border-outline-variant/20 my-4">
+                <div>
+                  <span className="text-outline text-xs block">Autoevaluación</span>
+                  <span className="font-bold text-on-surface text-sm mt-0.5 block">
+                    {activeRecord.selfScore.toFixed(2)}
+                  </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-outline">Potencial Proyectado:</span>
-                  <span className="font-semibold text-primary">{activeRecord.potentialScore} / 5.0</span>
+                <div>
+                  <span className="text-outline text-xs block">Líder Directo</span>
+                  <span className="font-bold text-on-surface text-sm mt-0.5 block">
+                    {activeRecord.managerScore.toFixed(2)}
+                  </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-outline">Desempeño Observado:</span>
-                  <span className="font-semibold text-emerald-600">{activeRecord.performanceScore} / 5.0</span>
+                <div>
+                  <span className="text-outline text-xs block">Pares (360°)</span>
+                  <span className="font-bold text-on-surface text-sm mt-0.5 block">
+                    {activeRecord.peersScore.toFixed(2)}
+                  </span>
                 </div>
               </div>
 
-              {/* Síntesis de Competencias y Feedback */}
-              <div className="mb-4">
-                <h4 className="text-xs font-black uppercase text-outline tracking-wider mb-2">
-                  Diagnóstico Cualitativo del Desempeño
-                </h4>
-                <p className="text-xs text-on-surface-variant leading-relaxed p-3 bg-surface-container-low rounded-2xl border border-outline-variant/20">
-                  {activeRecord.gapAnalysis}
-                </p>
+              <div className="space-y-3 mb-5 text-xs">
+                <div className="flex justify-between items-center py-1.5 border-b border-outline-variant/20">
+                  <span className="text-outline">Clasificación 9-Box:</span>
+                  <span className="font-semibold text-primary">{activeRecord.box9}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-outline-variant/20">
+                  <span className="text-outline">Estado del Proceso:</span>
+                  <span className="flex items-center gap-1.5 font-medium text-on-surface">
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        activeRecord.status === 'Calibrado' ? 'bg-emerald-500' : 'bg-amber-500'
+                      }`}
+                    />
+                    {activeRecord.status}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-outline-variant/20">
+                  <span className="text-outline">Potencial de Crecimiento:</span>
+                  <span className="font-bold text-on-surface">
+                    {activeRecord.potentialScore.toFixed(1)} / 5.0
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-outline-variant/20">
+                  <span className="text-outline">Desempeño Operativo:</span>
+                  <span className="font-bold text-on-surface">
+                    {activeRecord.performanceScore.toFixed(1)} / 5.0
+                  </span>
+                </div>
               </div>
 
-              {/* Botones de Acción */}
+              <h4 className="text-xs font-semibold text-on-surface mb-1">
+                Conclusiones y Análisis de Brecha
+              </h4>
+              <p className="text-xs text-on-surface-variant leading-relaxed mb-5">
+                {activeRecord.gapAnalysis}
+              </p>
+
               <div className="flex flex-col gap-2">
                 <button
+                  type="button"
                   onClick={() => {
                     setCalibrationScore(activeRecord.calibratedScore);
                     setShowCalibrateModal(true);
                   }}
-                  className="w-full py-2.5 px-4 rounded-xl bg-primary text-on-primary text-xs font-bold hover:bg-primary-container transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+                  className="w-full py-2.5 px-4 rounded-xl bg-primary text-on-primary text-xs font-semibold hover:bg-primary-container transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-sm">tune</span>
-                  Ajustar Calificación Final
+                  <span>Calibrar en Sesión de Comité</span>
                 </button>
-
                 <button
+                  type="button"
                   onClick={() => {
                     if (onSelectEmployee) {
                       onSelectEmployee(activeRecord.id);
@@ -550,10 +704,10 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
                     }
                     onNavigate('empleados');
                   }}
-                  className="w-full py-2.5 px-4 rounded-xl bg-surface-container-highest hover:bg-surface-container-high text-on-surface text-xs font-bold border border-outline-variant/40 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full py-2 px-4 rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface text-xs font-medium border border-outline-variant/40 transition-all flex items-center justify-center gap-1 cursor-pointer"
                 >
-                  <span className="material-symbols-outlined text-sm text-primary">group</span>
-                  Ver Ficha Completa del Empleado
+                  <span className="material-symbols-outlined text-sm">person</span>
+                  <span>Ver Ficha 360° en Colaboradores</span>
                 </button>
               </div>
             </div>
@@ -561,168 +715,463 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
         </div>
       )}
 
-      {/* TAB 2: Matriz 9-Box Interactiva */}
+      {/* TAB 2: Matriz 9-Box - Cuadrantes 100% interactivos y dinámicos */}
       {activeTab === '9box' && (
-        <div className="bg-surface-container-lowest p-5 rounded-2xl border border-outline-variant/30 shadow-2xs flex flex-col gap-4">
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
+        <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant/30 shadow-2xs flex flex-col gap-6 animate-in fade-in duration-150">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-2 border-b border-outline-variant/20">
             <div>
-              <h2 className="text-base font-extrabold text-on-surface flex items-center gap-2">
+              <h2 className="text-base font-bold text-on-surface flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary">grid_view</span>
-                Matriz de 9 Cajas: Desempeño vs Potencial de Liderazgo
+                Matriz de Desempeño y Potencial (9 Cajas)
               </h2>
               <p className="text-xs text-outline">
-                Segmentación estratégica para planes de sucesión, bonos por desempeño y retención de talento clave.
+                Segmentación estratégica según potencial futuro (eje vertical) y rendimiento actual (eje horizontal).
               </p>
             </div>
-            <div className="flex items-center gap-2 text-xs flex-wrap">
-              <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold">
-                Estrellas: 18 (12%)
+            <button
+              type="button"
+              onClick={handleExport9Box}
+              disabled={isExporting}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-surface-container hover:bg-surface-container-high border border-outline-variant/40 text-on-surface flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="Descargar matriz en Excel oficial"
+            >
+              <span className={`material-symbols-outlined text-sm ${isExporting ? 'animate-spin' : ''}`}>
+                {isExporting ? 'progress_activity' : 'download'}
               </span>
-              <span className="px-2.5 py-1 rounded-full bg-primary/10 text-primary font-bold">
-                Base sólida: 95 (67%)
-              </span>
-              <button
-                onClick={async () => {
-                  try {
-                    await evaluationsApi.download9Box('xlsx');
-                    triggerToast('Acta 9-Box descargada con éxito en Excel.');
-                  } catch {
-                    triggerToast('Acta 9-Box exportada (modo local).');
-                  }
-                }}
-                className="px-3 py-1 rounded-xl bg-primary text-on-primary font-bold flex items-center gap-1.5 shadow-xs hover:bg-primary-container transition-all cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-xs">download</span>
-                <span>Descargar Acta 9-Box</span>
-              </button>
-            </div>
+              <span>{isExporting ? 'Exportando...' : 'Exportar Matriz Excel'}</span>
+            </button>
           </div>
 
-          {/* 3x3 Grid */}
-          <div className="grid grid-cols-3 gap-3 min-h-[420px]">
-            {/* Row 1: Alto Potencial */}
-            <div className="p-4 bg-purple-500/5 rounded-2xl border border-purple-300/40 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-purple-700 block">Potencial Alto / Desempeño Medio</span>
-                <h4 className="text-xs font-extrabold text-on-surface mt-0.5">Futuro Líder / Potencial por Desarrollar</h4>
-                <p className="text-[11px] text-outline mt-1">Gabriel Pardo (Operaciones de IA)</p>
-              </div>
-              <span className="text-[10px] text-primary font-bold">Plan de Coaching</span>
-            </div>
-
-            <div className="p-4 bg-emerald-500/10 rounded-2xl border border-emerald-400/40 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-emerald-700 block">Potencial Alto / Desempeño Alto</span>
-                <h4 className="text-xs font-extrabold text-on-surface mt-0.5">Alto Impacto (Estrella en Crecimiento)</h4>
-                <p className="text-[11px] text-outline mt-1">Marcos Varela (Datos)</p>
-              </div>
-              <span className="text-[10px] text-emerald-700 font-bold">Proyección Inmediata</span>
-            </div>
-
-            <div className="p-4 bg-emerald-500/20 rounded-2xl border-2 border-emerald-500 flex flex-col justify-between shadow-xs">
-              <div>
-                <span className="text-[10px] font-black uppercase text-emerald-800 block">Potencial Alto / Desempeño Superior</span>
-                <h4 className="text-sm font-black text-on-surface mt-0.5">Talento Destacado (Estrella) ⭐</h4>
-                <div className="flex items-center gap-1.5 mt-2">
-                  <UserAvatar name="Sofía Méndez" size="xs" shape="circle" />
-                  <UserAvatar name="Lucas Valenzuela" size="xs" shape="circle" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Fila 1: Alto Potencial */}
+            {/* 1.1: Bajo Rendimiento / Alto Potencial */}
+            {(() => {
+              const emps = getEmployeesForBox('low', 'high');
+              return (
+                <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20 flex flex-col justify-between min-h-[140px]">
+                  <div>
+                    <span className="text-xs font-semibold text-primary block">
+                      Enigma / Diamante Bruto
+                    </span>
+                    <p className="text-xs text-outline mt-0.5">Bajo Rendimiento &bull; Alto Potencial</p>
+                  </div>
+                  <div className="mt-3">
+                    {emps.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {emps.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecordId(e.id);
+                              setActiveTab('list');
+                            }}
+                            className="text-xs font-medium px-2 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 text-on-surface cursor-pointer text-left"
+                          >
+                            {e.employeeName} ({e.calibratedScore.toFixed(2)})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-outline">0 colaboradores</span>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <span className="text-[10px] text-emerald-800 font-black">Sucesores Directos de la Alta Dirección</span>
-            </div>
+              );
+            })()}
 
-            {/* Row 2: Potencial Medio */}
-            <div className="p-4 bg-surface-container rounded-2xl border border-outline-variant/30 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-outline block">Potencial Medio / Desempeño Bajo</span>
-                <h4 className="text-xs font-extrabold text-on-surface mt-0.5">Dilema / Ajuste de Rol</h4>
-              </div>
-              <span className="text-[10px] text-outline">Revisión a 90 días</span>
-            </div>
+            {/* 1.2: Rendimiento Medio / Alto Potencial */}
+            {(() => {
+              const emps = getEmployeesForBox('med', 'high');
+              return (
+                <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20 flex flex-col justify-between min-h-[140px]">
+                  <div>
+                    <span className="text-xs font-semibold text-primary block">
+                      Alto Potencial / Futuro Líder
+                    </span>
+                    <p className="text-xs text-outline mt-0.5">Rendimiento Medio &bull; Alto Potencial</p>
+                  </div>
+                  <div className="mt-3">
+                    {emps.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {emps.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecordId(e.id);
+                              setActiveTab('list');
+                            }}
+                            className="text-xs font-medium px-2 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 text-on-surface cursor-pointer text-left"
+                          >
+                            {e.employeeName} ({e.calibratedScore.toFixed(2)})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-outline">0 colaboradores</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
-            <div className="p-4 bg-primary/5 rounded-2xl border border-primary/20 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-primary block">Potencial Medio / Desempeño Medio</span>
-                <h4 className="text-xs font-extrabold text-on-surface mt-0.5">Columna Vertebral del Equipo</h4>
-                <p className="text-[11px] text-outline mt-1">Lic. Laura Benítez (Seguridad)</p>
-              </div>
-              <span className="text-[10px] text-primary font-bold">Estabilidad y Retención</span>
-            </div>
+            {/* 1.3: Alto Rendimiento / Alto Potencial (Estrella) */}
+            {(() => {
+              const emps = getEmployeesForBox('high', 'high');
+              return (
+                <div className="p-4 bg-primary/5 rounded-xl border border-primary/30 flex flex-col justify-between min-h-[140px] shadow-2xs">
+                  <div>
+                    <span className="text-xs font-bold text-primary flex items-center gap-1">
+                      <span className="material-symbols-outlined text-sm">star</span>
+                      Talento Estrella (Destacado)
+                    </span>
+                    <p className="text-xs text-outline mt-0.5">Alto Rendimiento &bull; Alto Potencial</p>
+                  </div>
+                  <div className="mt-3">
+                    {emps.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {emps.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecordId(e.id);
+                              setActiveTab('list');
+                            }}
+                            className="text-xs font-semibold px-2 py-1 rounded-lg bg-surface-container-lowest hover:bg-surface-container border border-primary/30 text-primary cursor-pointer text-left shadow-2xs"
+                          >
+                            {e.employeeName} ({e.calibratedScore.toFixed(2)})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-outline">0 colaboradores</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
-            <div className="p-4 bg-emerald-500/5 rounded-2xl border border-emerald-300/40 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-emerald-700 block">Potencial Medio / Desempeño Superior</span>
-                <h4 className="text-xs font-extrabold text-on-surface mt-0.5">Especialista Clave</h4>
-              </div>
-              <span className="text-[10px] text-emerald-700 font-bold">Reconocimiento Técnico</span>
-            </div>
+            {/* Fila 2: Potencial Medio */}
+            {/* 2.1: Bajo Rendimiento / Potencial Medio */}
+            {(() => {
+              const emps = getEmployeesForBox('low', 'med');
+              return (
+                <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20 flex flex-col justify-between min-h-[140px]">
+                  <div>
+                    <span className="text-xs font-semibold text-on-surface block">
+                      Dilema / Requiere Impulso
+                    </span>
+                    <p className="text-xs text-outline mt-0.5">Bajo Rendimiento &bull; Potencial Medio</p>
+                  </div>
+                  <div className="mt-3">
+                    {emps.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {emps.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecordId(e.id);
+                              setActiveTab('list');
+                            }}
+                            className="text-xs font-medium px-2 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 text-on-surface cursor-pointer text-left"
+                          >
+                            {e.employeeName} ({e.calibratedScore.toFixed(2)})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-outline">0 colaboradores</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
-            {/* Row 3: Potencial Bajo */}
-            <div className="p-4 bg-rose-500/5 rounded-2xl border border-rose-300/40 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-rose-700 block">Potencial Bajo / Desempeño Bajo</span>
-                <h4 className="text-xs font-extrabold text-on-surface mt-0.5">Bajo Desempeño (Riesgo)</h4>
-              </div>
-              <span className="text-[10px] text-rose-700 font-bold">Plan de Mejora del Desempeño</span>
-            </div>
+            {/* 2.2: Rendimiento Medio / Potencial Medio */}
+            {(() => {
+              const emps = getEmployeesForBox('med', 'med');
+              return (
+                <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20 flex flex-col justify-between min-h-[140px]">
+                  <div>
+                    <span className="text-xs font-semibold text-on-surface block">
+                      Profesional Clave / Núcleo
+                    </span>
+                    <p className="text-xs text-outline mt-0.5">Rendimiento Medio &bull; Potencial Medio</p>
+                  </div>
+                  <div className="mt-3">
+                    {emps.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {emps.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecordId(e.id);
+                              setActiveTab('list');
+                            }}
+                            className="text-xs font-medium px-2 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 text-on-surface cursor-pointer text-left"
+                          >
+                            {e.employeeName} ({e.calibratedScore.toFixed(2)})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-outline">0 colaboradores</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
-            <div className="p-4 bg-surface-container rounded-2xl border border-outline-variant/30 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-outline block">Potencial Bajo / Desempeño Medio</span>
-                <h4 className="text-xs font-extrabold text-on-surface mt-0.5">Operativo Eficiente</h4>
-              </div>
-              <span className="text-[10px] text-outline">Especialización de Tareas</span>
-            </div>
+            {/* 2.3: Alto Rendimiento / Potencial Medio */}
+            {(() => {
+              const emps = getEmployeesForBox('high', 'med');
+              return (
+                <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20 flex flex-col justify-between min-h-[140px]">
+                  <div>
+                    <span className="text-xs font-semibold text-on-surface block">
+                      Alto Desempeño / Pilar
+                    </span>
+                    <p className="text-xs text-outline mt-0.5">Alto Rendimiento &bull; Potencial Medio</p>
+                  </div>
+                  <div className="mt-3">
+                    {emps.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {emps.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecordId(e.id);
+                              setActiveTab('list');
+                            }}
+                            className="text-xs font-medium px-2 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 text-on-surface cursor-pointer text-left"
+                          >
+                            {e.employeeName} ({e.calibratedScore.toFixed(2)})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-outline">0 colaboradores</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
-            <div className="p-4 bg-surface-container rounded-2xl border border-outline-variant/30 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-outline block">Potencial Bajo / Desempeño Superior</span>
-                <h4 className="text-xs font-extrabold text-on-surface mt-0.5">Experto Artesano</h4>
-              </div>
-              <span className="text-[10px] text-outline">Mentor de Oficio</span>
-            </div>
+            {/* Fila 3: Bajo Potencial */}
+            {/* 3.1: Bajo Rendimiento / Bajo Potencial */}
+            {(() => {
+              const emps = getEmployeesForBox('low', 'low');
+              return (
+                <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20 flex flex-col justify-between min-h-[140px]">
+                  <div>
+                    <span className="text-xs font-semibold text-amber-700 block">
+                      Riesgo / Desalineado
+                    </span>
+                    <p className="text-xs text-outline mt-0.5">Bajo Rendimiento &bull; Bajo Potencial</p>
+                  </div>
+                  <div className="mt-3">
+                    {emps.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {emps.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecordId(e.id);
+                              setActiveTab('list');
+                            }}
+                            className="text-xs font-medium px-2 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 text-amber-800 cursor-pointer text-left"
+                          >
+                            {e.employeeName} ({e.calibratedScore.toFixed(2)})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-outline">0 colaboradores</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 3.2: Rendimiento Medio / Bajo Potencial */}
+            {(() => {
+              const emps = getEmployeesForBox('med', 'low');
+              return (
+                <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20 flex flex-col justify-between min-h-[140px]">
+                  <div>
+                    <span className="text-xs font-semibold text-on-surface block">
+                      Especialista Efectivo
+                    </span>
+                    <p className="text-xs text-outline mt-0.5">Rendimiento Medio &bull; Bajo Potencial</p>
+                  </div>
+                  <div className="mt-3">
+                    {emps.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {emps.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecordId(e.id);
+                              setActiveTab('list');
+                            }}
+                            className="text-xs font-medium px-2 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 text-on-surface cursor-pointer text-left"
+                          >
+                            {e.employeeName} ({e.calibratedScore.toFixed(2)})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-outline">0 colaboradores</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 3.3: Alto Rendimiento / Bajo Potencial */}
+            {(() => {
+              const emps = getEmployeesForBox('high', 'low');
+              return (
+                <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20 flex flex-col justify-between min-h-[140px]">
+                  <div>
+                    <span className="text-xs font-semibold text-on-surface block">
+                      Experto Confiable
+                    </span>
+                    <p className="text-xs text-outline mt-0.5">Alto Rendimiento &bull; Bajo Potencial</p>
+                  </div>
+                  <div className="mt-3">
+                    {emps.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {emps.map((e) => (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecordId(e.id);
+                              setActiveTab('list');
+                            }}
+                            className="text-xs font-medium px-2 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 text-on-surface cursor-pointer text-left"
+                          >
+                            {e.employeeName} ({e.calibratedScore.toFixed(2)})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-outline">0 colaboradores</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
 
-      {/* TAB 3: Curva Forzada y Sesión de Comité */}
+      {/* TAB 3: Sesión de Comité de Calibración - Estadísticas reales */}
       {activeTab === 'committee' && (
-        <div className="bg-surface-container-lowest p-5 rounded-2xl border border-outline-variant/30 shadow-2xs flex flex-col gap-5">
-          <div className="flex items-center justify-between">
+        <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant/30 shadow-2xs flex flex-col gap-6 animate-in fade-in duration-150">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-2 border-b border-outline-variant/20">
             <div>
-              <h2 className="text-base font-extrabold text-on-surface flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary">balance</span>
-                Ajuste de la Distribución de Resultados en Comité
+              <h2 className="text-base font-bold text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">groups</span>
+                Sesión de Calibración del Comité de Personas
               </h2>
               <p className="text-xs text-outline">
-                Control de sesgos de indulgencia o severidad de evaluadores mediante calibración colegiada.
+                Alineación de notas y normalización estadística de la curva de distribución de evaluaciones.
               </p>
             </div>
             <button
-              onClick={() => triggerToast('Distribución calibrada guardada sin objeciones del comité.')}
-              className="px-4 py-2 rounded-xl bg-primary text-on-primary text-xs font-bold hover:bg-primary-container shadow-xs cursor-pointer"
+              type="button"
+              onClick={() => setShowConfirmApproval(true)}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-primary text-on-primary hover:bg-primary-container flex items-center gap-1.5 cursor-pointer shadow-xs"
             >
-              Aprobar Distribución Oficial
+              <span className="material-symbols-outlined text-sm">done_all</span>
+              <span>Cerrar y Aprobar Sesión</span>
             </button>
           </div>
 
+          {/* Distribución gaussiana real calculada */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-4 bg-surface-container rounded-2xl border border-outline-variant/20">
-              <div className="text-xs text-outline font-bold uppercase">Nivel Sobresaliente (Top 15%)</div>
-              <div className="text-2xl font-black text-emerald-600 mt-1">12.6% Real</div>
-              <p className="text-xs text-emerald-700 mt-1">Dentro del rango de meta corporativa (10-15%).</p>
+            <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20">
+              <div className="text-xs text-on-surface-variant font-medium">
+                Distribución Destacado (Meta: 10-15%)
+              </div>
+              <div className="text-xl font-bold text-emerald-600 mt-1">
+                {pctEstrella}% Real{' '}
+                <span className="text-xs font-normal text-outline">({countEstrella} de {totalRecords})</span>
+              </div>
+              <p className="text-xs text-outline mt-1">
+                Colaboradores con puntaje de desempeño y potencial sobresaliente ($\ge 4.7$).
+              </p>
             </div>
 
-            <div className="p-4 bg-surface-container rounded-2xl border border-outline-variant/20">
-              <div className="text-xs text-outline font-bold uppercase">Nivel Sólido Esperado (70%)</div>
-              <div className="text-2xl font-black text-primary mt-1">73.2% Real</div>
-              <p className="text-xs text-primary mt-1">Distribución óptima de colaboradores competentes.</p>
+            <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20">
+              <div className="text-xs text-on-surface-variant font-medium">
+                Sólido Esperado (Meta: 65-75%)
+              </div>
+              <div className="text-xl font-bold text-primary mt-1">
+                {pctSolido}% Real{' '}
+                <span className="text-xs font-normal text-outline">({countSolido} de {totalRecords})</span>
+              </div>
+              <p className="text-xs text-outline mt-1">
+                Distribución óptima de colaboradores altamente competentes y alineados al rol.
+              </p>
             </div>
 
-            <div className="p-4 bg-surface-container rounded-2xl border border-outline-variant/20">
-              <div className="text-xs text-outline font-bold uppercase">Nivel Requiere Acompañamiento (15%)</div>
-              <div className="text-2xl font-black text-amber-600 mt-1">14.2% Real</div>
-              <p className="text-xs text-amber-700 mt-1">Con planes de capacitación y seguimiento asignados.</p>
+            <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/20">
+              <div className="text-xs text-on-surface-variant font-medium">
+                Requiere Acompañamiento (Meta: 10-15%)
+              </div>
+              <div className="text-xl font-bold text-amber-600 mt-1">
+                {pctAcomp}% Real{' '}
+                <span className="text-xs font-normal text-outline">({countAcomp} de {totalRecords})</span>
+              </div>
+              <p className="text-xs text-outline mt-1">
+                Colaboradores focalizados con planes formativos y seguimiento asignado.
+              </p>
+            </div>
+          </div>
+
+          {/* Barra de progreso consolidada de la curva */}
+          <div className="p-4 bg-surface-container-low/70 rounded-xl border border-outline-variant/20 flex flex-col gap-2">
+            <span className="text-xs font-semibold text-on-surface">Curva de Distribución Actual:</span>
+            <div className="w-full h-3 bg-surface-container rounded-full overflow-hidden flex">
+              <div
+                className="bg-emerald-500 h-full transition-all"
+                style={{ width: `${pctEstrella}%` }}
+                title={`Destacado: ${pctEstrella}%`}
+              />
+              <div
+                className="bg-primary h-full transition-all"
+                style={{ width: `${pctSolido}%` }}
+                title={`Sólido: ${pctSolido}%`}
+              />
+              <div
+                className="bg-amber-500 h-full transition-all"
+                style={{ width: `${pctAcomp}%` }}
+                title={`Acompañamiento: ${pctAcomp}%`}
+              />
+            </div>
+            <div className="flex items-center justify-between text-xs text-outline pt-1">
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                Destacado ({pctEstrella}%)
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-primary" />
+                Sólido ({pctSolido}%)
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-amber-500" />
+                Acompañamiento ({pctAcomp}%)
+              </span>
             </div>
           </div>
         </div>
@@ -731,13 +1180,22 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
       {/* Modal de Calibración */}
       {showCalibrateModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-surface-container-lowest max-w-md w-full rounded-3xl p-6 shadow-2xl border border-outline-variant/40">
+          <div
+            ref={calibrateModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="calibrate-title"
+            className="bg-surface-container-lowest max-w-md w-full rounded-2xl p-6 shadow-2xl border border-outline-variant/40 animate-in zoom-in-95 duration-150"
+          >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary">tune</span>
-                <h3 className="text-lg font-black text-on-surface">Calibración en Comité</h3>
+                <h3 id="calibrate-title" className="text-base font-bold text-on-surface">
+                  Calibración en Comité
+                </h3>
               </div>
               <button
+                type="button"
                 onClick={() => setShowCalibrateModal(false)}
                 className="w-8 h-8 rounded-full hover:bg-surface-container flex items-center justify-center text-outline cursor-pointer"
               >
@@ -746,22 +1204,20 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
             </div>
 
             <form onSubmit={handleSaveCalibration} className="flex flex-col gap-4 text-xs">
-              <div className="p-3 bg-surface-container rounded-2xl flex items-center gap-3">
-                <UserAvatar
-                  name={activeRecord.employeeName}
-                  size="md"
-                  shape="rounded"
-                />
+              <div className="p-3 bg-surface-container-low rounded-xl flex items-center gap-3">
+                <UserAvatar name={activeRecord.employeeName} size="md" shape="rounded" />
                 <div>
-                  <h4 className="font-bold text-on-surface">{activeRecord.employeeName}</h4>
-                  <p className="text-outline text-[11px]">{activeRecord.role}</p>
+                  <h4 className="font-semibold text-on-surface text-xs">{activeRecord.employeeName}</h4>
+                  <p className="text-outline text-xs">{activeRecord.role}</p>
                 </div>
               </div>
 
               <div>
-                <div className="flex justify-between font-bold text-on-surface mb-1">
-                  <span>Puntaje consensuado por el Comité:</span>
-                  <span className="text-primary text-sm">{calibrationScore.toFixed(2)} / 5.0</span>
+                <div className="flex justify-between font-medium text-on-surface mb-1">
+                  <span>Puntaje consensuado:</span>
+                  <span className="text-primary font-bold text-sm">
+                    {calibrationScore.toFixed(2)} / 5.0
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -775,11 +1231,14 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
               </div>
 
               <div>
-                <label className="font-bold text-on-surface block mb-1">Acuerdo del Comité / Justificación:</label>
+                <label className="font-medium text-on-surface block mb-1">
+                  Acuerdo del Comité / Justificación:
+                </label>
                 <textarea
                   rows={3}
-                  defaultValue="Se valida consistencia en entregables de alta disponibilidad y aporte a la estabilidad de la plataforma durante Q4."
-                  className="w-full p-2.5 bg-surface-container rounded-xl border border-outline-variant/40 text-on-surface outline-hidden focus:border-primary resize-none"
+                  value={calibrationNotes}
+                  onChange={(e) => setCalibrationNotes(e.target.value)}
+                  className="w-full p-2.5 bg-surface-container-low rounded-xl border border-outline-variant/40 text-on-surface outline-hidden focus:border-primary resize-none text-xs"
                 />
               </div>
 
@@ -787,18 +1246,60 @@ export const EvaluacionScreen: React.FC<EvaluacionScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowCalibrateModal(false)}
-                  className="px-4 py-2 rounded-xl text-on-surface-variant font-bold hover:bg-surface-container cursor-pointer"
+                  className="px-4 py-2 rounded-xl text-on-surface-variant font-medium hover:bg-surface-container cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-primary text-on-primary font-bold hover:bg-primary-container shadow-xs cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl bg-primary text-on-primary font-semibold hover:bg-primary-container shadow-xs cursor-pointer"
                 >
                   Registrar Calibración
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmación de Aprobación */}
+      {showConfirmApproval && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div
+            ref={approvalModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="approval-title"
+            className="bg-surface-container-lowest max-w-sm w-full rounded-2xl p-6 shadow-2xl border border-outline-variant/40 flex flex-col gap-4 text-xs animate-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary text-xl">
+                assignment_turned_in
+              </span>
+              <h3 id="approval-title" className="text-base font-bold text-on-surface">
+                Aprobar Evaluaciones
+              </h3>
+            </div>
+            <p className="text-on-surface-variant leading-relaxed">
+              ¿Confirmás el cierre oficial del ciclo de evaluación? Las notas calibradas quedarán
+              asentadas en los expedientes de desempeño.
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowConfirmApproval(false)}
+                className="px-4 py-2 rounded-xl text-on-surface-variant font-medium hover:bg-surface-container cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleApproveAll}
+                className="px-5 py-2.5 rounded-xl bg-primary text-on-primary font-semibold hover:bg-primary-container shadow-xs cursor-pointer"
+              >
+                Confirmar Aprobación
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { EmployeeProfile } from '../types';
 import { UserAvatar } from './UserAvatar';
+import { useFocusTrap } from './useFocusTrap';
 
 interface EvaluationModalProps {
   employee: EmployeeProfile;
@@ -17,6 +18,7 @@ export const EvaluationModal: React.FC<EvaluationModalProps> = ({ employee, onCl
   const [teamwork, setTeamwork] = useState('');
   const [comments, setComments] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const dialogRef = useFocusTrap<HTMLDivElement>(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -52,6 +54,7 @@ export const EvaluationModal: React.FC<EvaluationModalProps> = ({ employee, onCl
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150" onClick={onClose}>
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="eval-title"

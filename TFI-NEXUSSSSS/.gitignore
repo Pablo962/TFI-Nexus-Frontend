@@ -26,3 +26,6 @@ dist-ssr
 # Environment variables
 .env
 .env.*.local
+
+MODULOS_PROYECTO.md
+PENDIENTES_INTERFAZ.md

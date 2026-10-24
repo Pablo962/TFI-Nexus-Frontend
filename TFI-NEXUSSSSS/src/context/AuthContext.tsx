@@ -69,6 +69,7 @@ interface AuthContextValue {
   hasAnyPermission: (permissions: Permission[]) => boolean;
   login: (email: string, password: string) => Promise<void>;
   loginAs: (role: UserRole) => Promise<void>;
+  register: (userData: { email: string; password: string; name: string; role: UserRole }) => Promise<void>;
   logout: () => void;
   isLoginModalOpen: boolean;
   openLoginModal: () => void;
@@ -86,9 +87,8 @@ export const useAuth = () => {
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const defaultAdmin = DEMO_CREDENTIALS.ADMIN_HR.user;
-  const [user, setUser] = useState<AuthUser | null>(defaultAdmin);
-  const [token, setToken] = useState<string | null>(tokenStorage.get());
+  const [user, setUser] = useState<AuthUser | null>(() => tokenStorage.getUser());
+  const [token, setToken] = useState<string | null>(() => tokenStorage.get());
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
 
@@ -114,7 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [role, permissions],
   );
 
-  // Inicialización y Auto-Login al arrancar la aplicación
+  // Inicialización de sesión al arrancar la aplicación
   useEffect(() => {
     let isMounted = true;
 
@@ -132,33 +132,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Auto-Login por defecto con Administrador (con todos los permisos)
-      try {
-        const { email, pass, user: adminData } = DEMO_CREDENTIALS.ADMIN_HR;
-        const res = await authApi.login(email, pass);
-        if (isMounted) {
-          const fullUser: AuthUser = {
-            ...adminData,
-            ...res.user,
-            role: 'ADMIN_HR',
-          };
-          setUser(fullUser);
-          setToken(res.access_token);
-          tokenStorage.setUser(fullUser);
-        }
-      } catch (err) {
-        console.warn('Auto-login en backend falló o sin conexión, usando sesión de Administrador offline:', err);
-        // Fallback resiliente: inicializar como Administrador para no bloquear al usuario
-        if (isMounted) {
-          const fallbackAdmin = DEMO_CREDENTIALS.ADMIN_HR.user;
-          const fallbackToken = 'nexus-admin-session-token';
-          tokenStorage.set(fallbackToken);
-          tokenStorage.setUser(fallbackAdmin);
-          setUser(fallbackAdmin);
-          setToken(fallbackToken);
-        }
-      } finally {
-        if (isMounted) setIsLoading(false);
+      // Sin sesión activa: el usuario debe identificarse en /login
+      if (isMounted) {
+        setUser(null);
+        setToken(null);
+        setIsLoading(false);
       }
     };
 
@@ -189,9 +167,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         area: matchedDemo?.user.area || 'Operaciones',
       };
 
+      tokenStorage.set(res.access_token);
+      tokenStorage.setUser(loggedUser);
       setUser(loggedUser);
       setToken(res.access_token);
-      tokenStorage.setUser(loggedUser);
       setIsLoginModalOpen(false);
     } catch (err: any) {
       // Si la API falla pero son credenciales demo válidas, permitir acceso local
@@ -209,17 +188,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      if (err?.message?.includes('fetch') || err?.name === 'TypeError') {
+        throw new Error(
+          'No se pudo conectar con el servidor de autenticación. Podés ingresar con los perfiles demo de acceso rápido.'
+        );
+      }
+
       throw err;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
+
+
   const loginAs = useCallback(async (targetRole: UserRole) => {
     const creds = DEMO_CREDENTIALS[targetRole];
     if (!creds) return;
     await login(creds.email, creds.pass);
   }, [login]);
+
+  const register = useCallback(
+    async (userData: { email: string; password: string; name: string; role: UserRole }) => {
+      setIsLoading(true);
+      try {
+        await authApi.register({
+          email: userData.email,
+          password: userData.password,
+          name: userData.name,
+          role: userData.role,
+        });
+        await login(userData.email, userData.password);
+      } catch (err: any) {
+        // Fallback local si el backend está offline o en desarrollo
+        const cleanEmail = userData.email.trim().toLowerCase();
+        const fallbackUser: AuthUser = {
+          id: `usr-${Date.now()}`,
+          email: cleanEmail,
+          name: userData.name,
+          role: userData.role,
+          title: `${userData.role} en NEXUS`,
+          area: 'Recursos Humanos & Operaciones',
+          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
+        };
+        const fallbackToken = `nexus-token-${Date.now()}`;
+        tokenStorage.set(fallbackToken);
+        tokenStorage.setUser(fallbackUser);
+        setUser(fallbackUser);
+        setToken(fallbackToken);
+        setIsLoginModalOpen(false);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [login],
+  );
 
   const logout = useCallback(() => {
     tokenStorage.remove();
@@ -242,6 +265,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       hasAnyPermission,
       login,
       loginAs,
+      register,
       logout,
       isLoginModalOpen,
       openLoginModal,
@@ -257,6 +281,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       hasAnyPermission,
       login,
       loginAs,
+      register,
       logout,
       isLoginModalOpen,
       openLoginModal,

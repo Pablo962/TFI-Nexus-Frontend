@@ -1,4 +1,4 @@
-import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { EmpleadosScreen } from '../components/screens/EmpleadosScreen';
 import { EvaluationModal } from '../components/EvaluationModal';
 import { EMPLOYEES_DATA } from '../data/mockData';
@@ -15,10 +15,8 @@ export default function Personas() {
   const { employeeId, action } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const { goScreen, goTo } = useScreenNavigate();
+  const { goScreen } = useScreenNavigate();
   const { showToast } = useToast();
-
-  if (employeeId && !EMPLOYEES_DATA.some((e) => e.id === employeeId)) return <Navigate to="/personas" replace />;
 
   const activeId = employeeId ?? DEFAULT_EMPLOYEE;
   const evaluating = action === 'evaluar' ? EMPLOYEES_DATA.find((e) => e.id === activeId) : undefined;
@@ -42,7 +40,7 @@ export default function Personas() {
           employee={evaluating}
           onClose={closeEvaluation}
           onSave={() => {
-            showToast(`¡Listo! La evaluación de ${evaluating.name} se guardó correctamente.`);
+            showToast(`¡Listo! La evaluación de ${evaluating.name} se guardó correctamente.`, 'success');
             closeEvaluation();
           }}
         />

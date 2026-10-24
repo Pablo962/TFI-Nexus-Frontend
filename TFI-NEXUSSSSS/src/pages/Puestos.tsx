@@ -1,4 +1,4 @@
-import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PuestosScreen } from '../components/screens/PuestosScreen';
 import { JOB_POSITIONS } from '../data/mockData';
 import { useScreenNavigate } from '../hooks/useScreenNavigate';
@@ -11,8 +11,6 @@ export default function Puestos() {
   const navigate = useNavigate();
   const { goScreen, goTo } = useScreenNavigate();
   const { showToast } = useToast();
-
-  if (jobCode && !JOB_POSITIONS.some((j) => j.code === jobCode)) return <Navigate to="/puestos" replace />;
 
   return (
     <PuestosScreen

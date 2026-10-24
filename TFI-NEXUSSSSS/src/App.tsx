@@ -20,6 +20,7 @@ const Reclutamiento = lazy(() => import('./pages/Reclutamiento'));
 const Desempeno = lazy(() => import('./pages/Desempeno'));
 const Capacitacion = lazy(() => import('./pages/Capacitacion'));
 const Reportes = lazy(() => import('./pages/Reportes'));
+const Login = lazy(() => import('./pages/Login'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
       <ToastProvider>
         <LoginModal />
         <Routes>
+          <Route path="login" element={<Login />} />
           <Route element={<Layout />}>
             <Route index element={<Dashboard />} />
             <Route path="talento" element={<Talento />} />

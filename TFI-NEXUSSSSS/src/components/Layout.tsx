@@ -1,15 +1,20 @@
 import React, { Suspense, useEffect, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, Navigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { Breadcrumbs } from './Breadcrumbs';
+import { PageLoader } from './SkeletonLoader';
+import { CommandPalette } from './CommandPalette';
 import { useBreadcrumbs } from '../hooks/useBreadcrumbs';
+import { useAuth } from '../context/AuthContext';
 import { APP_NAME } from '../routes';
 
 /** Estructura compartida por todas las páginas: menú, cabecera, ruta de navegación y contenido. */
 export const Layout: React.FC = () => {
+  const { user, isAuthenticated, isLoading } = useAuth();
   const [selectedCampus, setSelectedCampus] = useState<string>('Campus Central');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem('nexus_sidebar_collapsed') === 'true';
@@ -53,9 +58,29 @@ export const Layout: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [isMobileSidebarOpen]);
 
+  // Atajo global Ctrl+K / Cmd+K para abrir la paleta de comandos
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  if (isLoading) {
+    return <PageLoader />;
+  }
+
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
   return (
     <div className="min-h-screen bg-surface flex text-on-surface antialiased selection:bg-primary/20 selection:text-primary font-body">
-      <a href="#contenido" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[70] focus:bg-primary focus:text-on-primary focus:px-4 focus:py-2 focus:rounded-xl">
+      <a href="#contenido" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[70] focus:bg-primary focus:text-on-primary focus:px-4 focus:py-2 focus:rounded-lg">
         Saltar al contenido
       </a>
 
@@ -76,22 +101,21 @@ export const Layout: React.FC = () => {
           onSelectCampus={setSelectedCampus}
           onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
           isSidebarCollapsed={isSidebarCollapsed}
+          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         />
 
-        <main id="contenido" className="flex-1 mt-20 pb-16 overflow-x-hidden">
+        <main id="contenido" className="flex-1 mt-16 pb-16 overflow-x-hidden">
           <Breadcrumbs />
-          <Suspense
-            fallback={
-              <div className="w-full px-8 py-16 flex items-center justify-center gap-2 text-sm text-on-surface-variant" role="status">
-                <span className="material-symbols-outlined animate-spin text-primary" aria-hidden="true">progress_activity</span>
-                Cargando sección...
-              </div>
-            }
-          >
+          <Suspense fallback={<PageLoader />}>
             <Outlet context={{ selectedCampus }} />
           </Suspense>
         </main>
       </div>
+
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+      />
     </div>
   );
 };

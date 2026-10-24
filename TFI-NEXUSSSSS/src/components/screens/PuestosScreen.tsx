@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { JobPosition, ScreenId } from '../../types';
 import { JOB_POSITIONS } from '../../data/mockData';
 import { UserAvatar } from '../UserAvatar';
 import { QuickGuideBanner } from '../QuickGuideBanner';
-import { HelpTooltip } from '../HelpTooltip';
+import { useToast } from '../ToastProvider';
 import { jobsApi } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 
@@ -21,15 +22,22 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
   selectedJobCode = 'PUE-2026-ARCH-03',
   onChangeJobCode,
 }) => {
-  const { user, role, hasPermission, openLoginModal } = useAuth();
+  const { hasPermission, openLoginModal } = useAuth();
+  const { showToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const setSelectedJobCode = (code: string) => onChangeJobCode?.(code);
   const [positions, setPositions] = useState<JobPosition[]>(JOB_POSITIONS);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedArea, setSelectedArea] = useState('');
-  const [selectedHierarchy, setSelectedHierarchy] = useState('sr');
-  const [onlyCritical, setOnlyCritical] = useState(false);
+
+  // Filtros sincronizados con la URL
+  const [searchQuery, setSearchQuery] = useState(searchParams.get('q') || '');
+  const [selectedArea, setSelectedArea] = useState(searchParams.get('area') || '');
+  const [selectedHierarchy, setSelectedHierarchy] = useState(searchParams.get('nivel') || '');
+  const [onlyCritical, setOnlyCritical] = useState(searchParams.get('criticos') === '1');
   const [showNewJobModal, setShowNewJobModal] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [jobFormSubmitted, setJobFormSubmitted] = useState(false);
+  const [activeJobTab, setActiveJobTab] = useState<'resumen' | 'competencias' | 'organizacion'>('resumen');
+  const [isDownloadingMatrix, setIsDownloadingMatrix] = useState(false);
 
   // Campos para crear nuevo puesto
   const [newTitle, setNewTitle] = useState('');
@@ -38,6 +46,7 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
   const [newMission, setNewMission] = useState('');
   const [isSubmittingJob, setIsSubmittingJob] = useState(false);
 
+  // Carga inicial desde backend con fallback a mockData
   useEffect(() => {
     let isMounted = true;
     jobsApi
@@ -48,19 +57,183 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
         }
       })
       .catch(() => {
-        // Fallback a JOB_POSITIONS en memoria
+        // Fallback en memoria
       });
     return () => {
       isMounted = false;
     };
   }, []);
 
-  const selectedJob: JobPosition =
-    positions.find((j) => j.code === selectedJobCode) || positions[0] || JOB_POSITIONS[0];
+  // Resetear pestaña al cambiar de puesto
+  useEffect(() => {
+    setActiveJobTab('resumen');
+  }, [selectedJobCode]);
 
-  const triggerToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+  // Manejadores de sincronización con URL
+  const handleSearchChange = (val: string) => {
+    setSearchQuery(val);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (val) p.set('q', val);
+        else p.delete('q');
+        return p;
+      },
+      { replace: true }
+    );
+  };
+
+  const handleAreaChange = (val: string) => {
+    setSelectedArea(val);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (val) p.set('area', val);
+        else p.delete('area');
+        return p;
+      },
+      { replace: true }
+    );
+  };
+
+  const handleHierarchyChange = (val: string) => {
+    setSelectedHierarchy(val);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (val) p.set('nivel', val);
+        else p.delete('nivel');
+        return p;
+      },
+      { replace: true }
+    );
+  };
+
+  const handleCriticalToggle = () => {
+    const next = !onlyCritical;
+    setOnlyCritical(next);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (next) p.set('criticos', '1');
+        else p.delete('criticos');
+        return p;
+      },
+      { replace: true }
+    );
+  };
+
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setSelectedArea('');
+    setSelectedHierarchy('');
+    setOnlyCritical(false);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete('q');
+        p.delete('area');
+        p.delete('nivel');
+        p.delete('criticos');
+        return p;
+      },
+      { replace: true }
+    );
+  };
+
+  // Áreas dinámicas obtenidas directamente de la lista de puestos
+  const availableAreas = useMemo(() => {
+    const set = new Set<string>();
+    positions.forEach((p) => {
+      if (p.department) set.add(p.department.trim());
+    });
+    return Array.from(set).sort();
+  }, [positions]);
+
+  // Filtro de puestos dinámico
+  const filteredPositions = useMemo(() => {
+    return positions.filter((j) => {
+      const q = searchQuery.toLowerCase().trim();
+      const matchesSearch =
+        !q ||
+        j.title.toLowerCase().includes(q) ||
+        j.code.toLowerCase().includes(q) ||
+        j.department.toLowerCase().includes(q);
+
+      const matchesCritical = !onlyCritical || j.status === 'critical';
+      const matchesArea = !selectedArea || j.department.toLowerCase() === selectedArea.toLowerCase();
+
+      let matchesHierarchy = true;
+      if (selectedHierarchy) {
+        const text = `${j.title} ${j.salaryBand || ''} ${j.reportsTo || ''}`.toLowerCase();
+        switch (selectedHierarchy) {
+          case 'dir':
+            matchesHierarchy =
+              text.includes('director') || text.includes('vp') || text.includes('gerente') || text.includes('c-level');
+            break;
+          case 'lead':
+            matchesHierarchy =
+              text.includes('líder') ||
+              text.includes('lider') ||
+              text.includes('coordinador') ||
+              text.includes('jefe') ||
+              text.includes('principal');
+            break;
+          case 'sr':
+            matchesHierarchy =
+              text.includes('senior') ||
+              text.includes('sr') ||
+              text.includes('arquitecto') ||
+              text.includes('especialista');
+            break;
+          case 'mid':
+            matchesHierarchy =
+              text.includes('semi') ||
+              text.includes('junior') ||
+              text.includes('analista') ||
+              text.includes('técnico') ||
+              text.includes('tecnico') ||
+              text.includes('asistente');
+            break;
+        }
+      }
+
+      return matchesSearch && matchesCritical && matchesArea && matchesHierarchy;
+    });
+  }, [positions, searchQuery, onlyCritical, selectedArea, selectedHierarchy]);
+
+  // Puesto seleccionado activo
+  const selectedJob: JobPosition =
+    positions.find((j) => j.code === selectedJobCode) ||
+    filteredPositions[0] ||
+    positions[0] ||
+    JOB_POSITIONS[0];
+
+  // Métricas dinámicas calculadas desde el catálogo
+  const totalPositions = positions.length;
+  const criticalPositions = positions.filter((p) => p.status === 'critical').length;
+  const calibratedCount = positions.filter(
+    (p) => p.isCalibrated || (p.complianceRate && p.complianceRate >= 80)
+  ).length;
+  const calibratedRate = totalPositions > 0 ? Math.round((calibratedCount / totalPositions) * 100) : 0;
+  const totalSkillsCount = positions.reduce(
+    (acc, p) => acc + (p.techSkills?.length || 0) + (p.softSkills?.length || 0),
+    0
+  );
+
+  const hasActiveFilters = Boolean(searchQuery || selectedArea || selectedHierarchy || onlyCritical);
+
+  // Acciones reales
+  const handleDownloadMatrix = async () => {
+    setIsDownloadingMatrix(true);
+    try {
+      await jobsApi.downloadMatrix('xlsx');
+      showToast('Matriz de puestos descargada en formato Excel.', 'success');
+    } catch {
+      showToast('Matriz de puestos exportada en formato Excel/CSV', 'info');
+    } finally {
+      setIsDownloadingMatrix(false);
+    }
   };
 
   const handleCreateVacancy = async () => {
@@ -70,24 +243,24 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
       // Silencioso
     }
     if (onSelectJobForRecruitment) {
-      // La página muestra el aviso de éxito y lleva al usuario a Selección de Personal.
       onSelectJobForRecruitment(selectedJob.code);
       return;
     }
-    triggerToast(`Vacante generada para ${selectedJob.title}`);
+    showToast(`Vacante generada para ${selectedJob.title}`, 'success');
     setTimeout(() => {
       onNavigate('reclutamiento');
     }, 600);
   };
 
   const handleSaveJob = async () => {
+    setJobFormSubmitted(true);
     if (!hasPermission('jobs:create')) {
-      triggerToast('Acción restringida: Se requiere rol de Administrador (ADMIN_HR) para crear puestos.');
+      showToast('Acción restringida: Se requiere rol de Administrador (ADMIN_HR) para crear puestos.', 'error');
       openLoginModal();
       return;
     }
     if (!newTitle.trim()) {
-      triggerToast('Por favor, ingresá el nombre del puesto.');
+      showToast('Por favor, ingresá el nombre del puesto.', 'error');
       return;
     }
     setIsSubmittingJob(true);
@@ -110,10 +283,10 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
       const created = await jobsApi.create(jobPayload);
       setPositions((prev) => [created, ...prev]);
       setSelectedJobCode(created.code);
-      triggerToast(`¡Listo! Puesto "${created.title}" guardado en la base de datos.`);
+      showToast(`¡Listo! Puesto "${created.title}" guardado en la base de datos.`, 'success');
     } catch (err: any) {
       if (err?.message?.includes('401') || err?.message?.includes('Unauthorized')) {
-        triggerToast('Sesión no autorizada. Por favor iniciá sesión como Administrador.');
+        showToast('Sesión no autorizada. Por favor iniciá sesión como Administrador.', 'error');
         openLoginModal();
         setIsSubmittingJob(false);
         return;
@@ -138,67 +311,48 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
       };
       setPositions((prev) => [fallbackJob, ...prev]);
       setSelectedJobCode(fallbackJob.code);
-      triggerToast(`¡Listo! Puesto "${fallbackJob.title}" creado correctamente.`);
+      showToast(`¡Listo! Puesto "${fallbackJob.title}" creado correctamente.`, 'success');
     } finally {
       setIsSubmittingJob(false);
       setShowNewJobModal(false);
+      setJobFormSubmitted(false);
       setNewTitle('');
       setNewMission('');
     }
   };
 
-  const filteredPositions = positions.filter((j) => {
-    const matchesSearch =
-      !searchQuery ||
-      j.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      j.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      j.department.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCritical = !onlyCritical || j.status === 'critical';
-    return matchesSearch && matchesCritical;
-  });
-
   return (
     <div className="w-full px-6 lg:px-8 py-6 flex flex-col gap-6 pb-20">
-      {/* Toast */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-inverse-surface text-inverse-on-surface px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-outline-variant/30 animate-in fade-in slide-in-from-bottom-3 duration-200">
-          <span className="material-symbols-outlined text-secondary-container">check_circle</span>
-          <span className="text-sm font-semibold">{toastMessage}</span>
-        </div>
-      )}
-
-      {/* Compact Header & Main Actions */}
+      {/* Header & Main Global Actions */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-1">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl lg:text-2xl font-black text-on-surface tracking-tight font-headline">
-            Puestos de Trabajo y Perfiles
+        <div>
+          <h1 className="text-xl lg:text-2xl font-bold text-on-surface tracking-tight font-headline">
+            Puestos de Trabajo
           </h1>
-          <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-            {positions.length} puestos &bull; {positions.filter((p) => p.status === 'critical').length} críticos
-          </span>
+          <p className="text-xs text-on-surface-variant font-medium mt-0.5">
+            {totalPositions} puestos definidos &bull; {criticalPositions} puestos clave
+          </p>
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <button
-            onClick={async () => {
-              try {
-                await jobsApi.downloadMatrix('xlsx');
-                triggerToast('Matriz de puestos descargada en formato Excel.');
-              } catch {
-                triggerToast('Matriz de puestos exportada en formato Excel/CSV');
-              }
-            }}
-            className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-xl text-xs font-bold bg-surface-container text-on-surface hover:bg-surface-container-high border border-outline-variant/40 transition-all flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+            onClick={handleDownloadMatrix}
+            disabled={isDownloadingMatrix}
+            className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-surface-container text-on-surface hover:bg-surface-container-high border border-outline-variant/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Descargar matriz consolidada de puestos en formato Excel"
           >
-            <span className="material-symbols-outlined text-outline text-[16px]">download</span>
-            Exportar Matriz
+            <span className="material-symbols-outlined text-outline text-[16px]">
+              {isDownloadingMatrix ? 'progress_activity' : 'download'}
+            </span>
+            <span>Exportar Matriz</span>
           </button>
           <button
             onClick={() => setShowNewJobModal(true)}
-            className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-xl text-xs font-bold bg-primary text-on-primary hover:bg-primary-container transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+            className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-primary text-on-primary hover:bg-primary-container transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+            title="Crear un nuevo puesto en el catálogo organizacional"
           >
-            <span className="material-symbols-outlined text-[16px]">add_circle</span>
-            + Nuevo Puesto
+            <span className="material-symbols-outlined text-[16px]">add</span>
+            <span>Nuevo Puesto</span>
           </button>
         </div>
       </div>
@@ -209,77 +363,56 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
         description="Gestión de roles organizacionales, responsabilidades y competencias requeridas."
         tips={[
           'Hacé clic en cualquier puesto del catálogo para inspeccionar su ficha técnica y requisitos.',
-          'Usá el botón "+ Nuevo Puesto" para dar de alta una posición en el organigrama.',
+          'Usá el botón "Nuevo Puesto" para dar de alta una posición en el organigrama.',
           'Hacé clic en "Generar Vacante" para iniciar la búsqueda de candidatos en Reclutamiento.',
         ]}
         dismissible={true}
       />
 
-      {/* Compact 4-Metric Status Strip (Saves over 120px of vertical space) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-        <div className="bg-surface-container-lowest px-3.5 py-2.5 rounded-xl border border-outline-variant/30 flex items-center justify-between shadow-2xs">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-outline block">Puestos Definidos</span>
-            <div className="text-base font-black text-on-surface">
-              {positions.length} <span className="text-[11px] font-normal text-outline">cargos</span>
-            </div>
+      {/* Clean 4-Metric Status Strip - Calculado 100% dinámicamente desde datos */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-surface-container-lowest px-4 py-3 rounded-xl border border-outline-variant/30 flex flex-col gap-1 shadow-2xs">
+          <span className="text-xs text-on-surface-variant font-medium">Puestos definidos</span>
+          <div className="text-xl font-bold text-on-surface">
+            {totalPositions} <span className="text-xs font-normal text-outline">cargos</span>
           </div>
-          <span className="px-2 py-0.5 rounded-md bg-primary/10 text-primary text-[10px] font-bold">
-            Estructura 2026
-          </span>
         </div>
 
-        <div className="bg-surface-container-lowest px-3.5 py-2.5 rounded-xl border border-outline-variant/30 flex items-center justify-between shadow-2xs">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-outline block">Puestos Críticos</span>
-            <div className="text-base font-black text-amber-600">
-              {positions.filter((p) => p.status === 'critical').length}{' '}
-              <span className="text-[11px] font-bold text-amber-700">roles clave</span>
-            </div>
+        <div className="bg-surface-container-lowest px-4 py-3 rounded-xl border border-outline-variant/30 flex flex-col gap-1 shadow-2xs">
+          <span className="text-xs text-on-surface-variant font-medium">Puestos críticos</span>
+          <div className="text-xl font-bold text-amber-600">
+            {criticalPositions} <span className="text-xs font-normal text-outline">roles clave</span>
           </div>
-          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold">
-            33.3% impacto
-          </span>
         </div>
 
-        <div className="bg-surface-container-lowest px-3.5 py-2.5 rounded-xl border border-outline-variant/30 flex items-center justify-between shadow-2xs">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-outline block">Brecha Cero</span>
-            <div className="text-base font-black text-emerald-600">
-              82% <span className="text-[11px] font-normal text-outline">calibrados</span>
-            </div>
+        <div className="bg-surface-container-lowest px-4 py-3 rounded-xl border border-outline-variant/30 flex flex-col gap-1 shadow-2xs">
+          <span className="text-xs text-on-surface-variant font-medium">Calibrados / Brecha</span>
+          <div className="text-xl font-bold text-emerald-600">
+            {calibratedRate}% <span className="text-xs font-normal text-outline">óptimos</span>
           </div>
-          <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold">
-            +4.5% vs Q3
-          </span>
         </div>
 
-        <div className="bg-surface-container-lowest px-3.5 py-2.5 rounded-xl border border-outline-variant/30 flex items-center justify-between shadow-2xs">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-outline block">Habilidades Registradas</span>
-            <div className="text-base font-black text-on-surface">
-              320 <span className="text-[11px] font-normal text-outline">skills</span>
-            </div>
+        <div className="bg-surface-container-lowest px-4 py-3 rounded-xl border border-outline-variant/30 flex flex-col gap-1 shadow-2xs">
+          <span className="text-xs text-on-surface-variant font-medium">Competencias</span>
+          <div className="text-xl font-bold text-on-surface">
+            {totalSkillsCount} <span className="text-xs font-normal text-outline">requeridas</span>
           </div>
-          <span className="px-2 py-0.5 rounded-md bg-surface-container-high text-primary text-[10px] font-bold">
-            190 téc / 130 cond
-          </span>
         </div>
       </div>
 
       {/* Unified Filter Toolbar */}
-      <div className="bg-surface-container-lowest px-4 py-2 rounded-2xl shadow-2xs border border-outline-variant/30 flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div className="bg-surface-container-lowest px-4 py-2.5 rounded-2xl shadow-2xs border border-outline-variant/30 flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
           {/* Search Input */}
-          <div className="relative flex items-center min-w-[240px] flex-1 sm:flex-initial">
+          <div className="relative flex items-center min-w-[220px] flex-1 sm:flex-initial">
             <span className="material-symbols-outlined absolute left-2.5 text-outline text-[16px]">
               search
             </span>
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por código, nombre o habilidad..."
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="Buscar por código, puesto o área..."
               className="w-full pl-8 pr-3 py-1.5 bg-surface-container-low text-on-surface placeholder:text-outline rounded-xl text-xs outline-hidden focus:bg-surface-container-lowest focus:ring-1 focus:ring-primary border border-outline-variant/30"
             />
           </div>
@@ -289,14 +422,15 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
             <span className="material-symbols-outlined text-outline text-[15px]">domain</span>
             <select
               value={selectedArea}
-              onChange={(e) => setSelectedArea(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-on-surface outline-hidden cursor-pointer"
+              onChange={(e) => handleAreaChange(e.target.value)}
+              className="bg-transparent text-xs font-medium text-on-surface outline-hidden cursor-pointer"
             >
-              <option value="">Todas las Áreas</option>
-              <option value="ing">Tecnología y Plataforma</option>
-              <option value="prod">Producto</option>
-              <option value="ops">Operaciones</option>
-              <option value="people">Personas</option>
+              <option value="">Todas las áreas ({availableAreas.length})</option>
+              {availableAreas.map((area) => (
+                <option key={area} value={area}>
+                  {area}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -305,34 +439,47 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
             <span className="material-symbols-outlined text-outline text-[15px]">layers</span>
             <select
               value={selectedHierarchy}
-              onChange={(e) => setSelectedHierarchy(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-on-surface outline-hidden cursor-pointer"
+              onChange={(e) => handleHierarchyChange(e.target.value)}
+              className="bg-transparent text-xs font-medium text-on-surface outline-hidden cursor-pointer"
             >
-              <option value="">Nivel Jerárquico</option>
-              <option value="dir">Dirección</option>
-              <option value="lead">Liderazgo Técnico</option>
-              <option value="sr">Senior / Especialista</option>
-              <option value="mid">Nivel intermedio</option>
+              <option value="">Todos los niveles</option>
+              <option value="dir">Dirección y Gerencia</option>
+              <option value="lead">Liderazgo y Coordinación</option>
+              <option value="sr">Senior / Arquitecto</option>
+              <option value="mid">Intermedio / Operativo</option>
             </select>
           </div>
 
           {/* Critical Only Toggle */}
           <button
             type="button"
-            onClick={() => setOnlyCritical(!onlyCritical)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+            onClick={handleCriticalToggle}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
               onlyCritical
-                ? 'bg-tertiary-fixed text-on-tertiary-fixed-variant shadow-2xs'
+                ? 'bg-amber-100 text-amber-800 border border-amber-200'
                 : 'bg-surface-container-low hover:bg-surface-container text-on-surface-variant'
             }`}
           >
-            <span className="material-symbols-outlined text-[15px] text-tertiary">warning</span>
-            <span>{onlyCritical ? 'Solo Críticos' : 'Críticos Primero'}</span>
+            <span className="material-symbols-outlined text-[15px] text-amber-600">warning</span>
+            <span>{onlyCritical ? 'Solo críticos' : 'Críticos'}</span>
           </button>
+
+          {/* Reset Filters Shortcut */}
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="px-2.5 py-1 text-xs text-outline hover:text-error flex items-center gap-1 transition-colors cursor-pointer"
+              title="Restablecer todos los filtros"
+            >
+              <span className="material-symbols-outlined text-[14px]">filter_alt_off</span>
+              <span className="hidden sm:inline">Limpiar</span>
+            </button>
+          )}
         </div>
 
-        <span className="text-[11px] text-outline font-medium">
-          {filteredPositions.length} de {positions.length} puestos mostrados
+        <span className="text-xs text-outline font-normal">
+          {filteredPositions.length} de {positions.length} puestos
         </span>
       </div>
 
@@ -340,668 +487,672 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
         {/* LEFT PANEL: Interactive Position Directory */}
         <div className="xl:col-span-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between px-1 py-1">
-            <span className="text-[11px] uppercase tracking-wider text-outline font-bold">
-              Catálogo Seleccionable
-            </span>
-            <span className="text-xs text-primary font-bold">
-              {filteredPositions.length} Mostrados
-            </span>
+          <div className="flex items-center justify-between px-1 py-0.5">
+            <span className="text-xs text-on-surface-variant font-medium">Catálogo de puestos</span>
+            <span className="text-xs text-outline font-normal">{filteredPositions.length} puestos</span>
           </div>
 
-          {filteredPositions.map((pos) => {
-            const isSelected = selectedJobCode === pos.code;
-
-            return (
-              <div
-                key={pos.code}
-                onClick={() => setSelectedJobCode(pos.code)}
-                className={`p-3.5 rounded-2xl transition-all cursor-pointer border ${
-                  isSelected
-                    ? 'bg-primary/5 shadow-xs ring-2 ring-primary/20 border-primary'
-                    : 'bg-surface-container-lowest shadow-2xs hover:shadow-xs border-outline-variant/30 hover:border-outline-variant'
-                }`}
+          {filteredPositions.length === 0 ? (
+            <div className="p-6 text-center bg-surface-container-lowest rounded-2xl border border-outline-variant/30 flex flex-col items-center gap-2 shadow-2xs">
+              <span className="material-symbols-outlined text-outline text-3xl">filter_alt_off</span>
+              <p className="text-xs text-on-surface-variant font-medium">
+                No se encontraron puestos con los filtros seleccionados.
+              </p>
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="text-xs text-primary font-semibold hover:underline cursor-pointer"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold shrink-0 ${
-                        isSelected
-                          ? 'bg-primary text-on-primary'
-                          : 'bg-surface-container text-outline'
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">
-                        {pos.status === 'critical' ? 'vpn_key' : 'work'}
-                      </span>
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-mono font-bold text-primary">
+                Restablecer filtros
+              </button>
+            </div>
+          ) : (
+            filteredPositions.map((pos) => {
+              const isSelected = selectedJob.code === pos.code;
+
+              return (
+                <div
+                  key={pos.code}
+                  onClick={() => setSelectedJobCode(pos.code)}
+                  className={`p-3.5 rounded-2xl transition-all cursor-pointer border ${
+                    isSelected
+                      ? 'bg-primary/5 shadow-xs ring-1 ring-primary/30 border-primary'
+                      : 'bg-surface-container-lowest shadow-2xs hover:shadow-xs border-outline-variant/30 hover:border-outline-variant'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                          isSelected ? 'bg-primary text-on-primary' : 'bg-surface-container text-outline'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[16px]">
+                          {pos.status === 'critical' ? 'vpn_key' : 'work'}
+                        </span>
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-xs font-mono font-medium text-slate-500 block">
                           {pos.code}
                         </span>
-                        {pos.status === 'critical' && (
-                          <span className="h-1.5 w-1.5 rounded-full bg-secondary" />
-                        )}
+                        <h3 className="text-xs font-semibold text-on-surface leading-tight truncate">
+                          {pos.title}
+                        </h3>
                       </div>
-                      <h3 className="text-xs font-bold text-on-surface leading-tight truncate">
-                        {pos.title}
-                      </h3>
                     </div>
-                  </div>
 
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[9px] font-bold shrink-0 ${
-                      pos.status === 'critical'
-                        ? 'bg-tertiary-fixed text-on-tertiary-fixed-variant'
-                        : 'bg-surface-container-high text-on-surface-variant'
-                    }`}
-                  >
-                    {pos.status === 'critical' ? 'Crítico' : 'Operativo'}
-                  </span>
-                </div>
-
-                <div className="mt-2 flex items-center justify-between text-on-surface-variant text-[11px]">
-                  <span className="flex items-center gap-1 truncate text-outline">
-                    <span className="material-symbols-outlined text-[13px]">domain</span>
-                    <span className="truncate">{pos.department}</span>
-                  </span>
-                  <span className="flex items-center gap-1 shrink-0 text-outline">
-                    <span className="material-symbols-outlined text-[13px]">group</span>
-                    <span>{pos.activeIncumbentsCount} pers.</span>
-                  </span>
-                </div>
-
-                <div className="mt-2 pt-2 border-t border-outline-variant/20 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-16 h-1.5 bg-surface-container-high rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${
-                          pos.complianceRate >= 90 ? 'bg-emerald-500' : 'bg-primary'
+                    <span className="flex items-center gap-1.5 text-xs shrink-0">
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          pos.status === 'critical' ? 'bg-amber-500' : 'bg-slate-300'
                         }`}
-                        style={{ width: `${pos.complianceRate}%` }}
                       />
-                    </div>
-                    <span className="text-[11px] font-bold text-on-surface">
-                      {pos.complianceRate}%
+                      <span
+                        className={
+                          pos.status === 'critical' ? 'text-amber-700 font-semibold' : 'text-on-surface-variant'
+                        }
+                      >
+                        {pos.status === 'critical' ? 'Crítico' : 'Operativo'}
+                      </span>
                     </span>
                   </div>
 
-                  <span
-                    className={`text-[11px] font-bold flex items-center gap-0.5 ${
-                      isSelected ? 'text-primary' : 'text-outline'
-                    }`}
-                  >
-                    {isSelected ? 'Inspeccionar' : 'Ver ficha'}
-                    <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
-                  </span>
+                  <div className="mt-2 flex items-center justify-between text-on-surface-variant text-xs">
+                    <span className="flex items-center gap-1 truncate text-outline">
+                      <span className="material-symbols-outlined text-[13px]">domain</span>
+                      <span className="truncate">{pos.department}</span>
+                    </span>
+                    <span className="flex items-center gap-1 shrink-0 text-outline">
+                      <span className="material-symbols-outlined text-[13px]">group</span>
+                      <span>{pos.activeIncumbentsCount} pers.</span>
+                    </span>
+                  </div>
+
+                  <div className="mt-2 pt-2 border-t border-outline-variant/20 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-16 h-1.5 bg-surface-container-high rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${
+                            pos.complianceRate >= 90 ? 'bg-emerald-500' : 'bg-primary'
+                          }`}
+                          style={{ width: `${pos.complianceRate}%` }}
+                        />
+                      </div>
+                      <span className="text-xs font-semibold text-on-surface">
+                        {pos.complianceRate}%
+                      </span>
+                    </div>
+
+                    <span
+                      className={`text-xs font-medium flex items-center gap-0.5 ${
+                        isSelected ? 'text-primary font-semibold' : 'text-outline'
+                      }`}
+                    >
+                      {isSelected ? 'Seleccionado' : 'Ver ficha'}
+                      <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
+                    </span>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
 
         {/* RIGHT PANEL: DETAILED TECHNICAL SHEET (FICHA TÉCNICA) */}
         <div className="xl:col-span-8 flex flex-col gap-5">
-          {/* Master Header */}
-          <div className="bg-surface-container-lowest p-5 lg:p-6 rounded-3xl shadow-xs border border-outline-variant/30 flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Master Header - Meta Line & Action Cluster */}
+          <div className="bg-surface-container-lowest p-5 lg:p-6 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-primary-fixed flex items-center justify-center text-primary shadow-2xs shrink-0">
-                  <span className="material-symbols-outlined text-[28px]">cloud_done</span>
+                <div className="w-10 h-10 rounded-xl bg-surface-container-high flex items-center justify-center text-primary shrink-0">
+                  <span className="material-symbols-outlined text-[22px]">work</span>
                 </div>
                 <div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] font-mono font-bold text-primary px-2 py-0.5 bg-primary-fixed/40 rounded-md">
-                      {selectedJob.code}
-                    </span>
-                    <span className="text-[11px] text-secondary font-bold px-2 py-0.5 bg-secondary-container/30 rounded-full flex items-center gap-1">
-                      <span className="h-1.5 w-1.5 rounded-full bg-secondary" /> Activo &amp; Calibrado
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="font-mono font-semibold text-primary">{selectedJob.code}</span>
+                    <span className="text-outline-variant">&bull;</span>
+                    <span className="flex items-center gap-1.5 text-emerald-700 font-medium">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Activo &amp; Calibrado
                     </span>
                     {selectedJob.status === 'critical' && (
-                      <span className="text-[11px] text-on-tertiary-fixed-variant font-bold px-2 py-0.5 bg-tertiary-fixed rounded-full">
-                        Puesto Clave / Crítico
-                      </span>
+                      <>
+                        <span className="text-outline-variant">&bull;</span>
+                        <span className="flex items-center gap-1.5 text-amber-700 font-semibold">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Puesto clave
+                        </span>
+                      </>
                     )}
                   </div>
-                  <h2 className="text-xl lg:text-2xl font-black text-on-surface mt-1">
-                    {selectedJob.title}
-                  </h2>
-                  <p className="text-xs text-outline">{selectedJob.division}</p>
+                  <h2 className="text-xl font-bold text-on-surface mt-1">{selectedJob.title}</h2>
+                  <p className="text-xs text-outline font-normal">{selectedJob.division}</p>
                 </div>
               </div>
 
-              {/* Incumbents Cluster */}
-              <div className="flex items-center gap-2.5 bg-surface-container-low px-3.5 py-2 rounded-2xl border border-outline-variant/20">
-                <div className="flex -space-x-2 overflow-hidden">
-                  {selectedJob.incumbents.map((inc, i) => (
-                    <UserAvatar
-                      key={i}
-                      name={inc.name}
-                      size="sm"
-                      shape="circle"
-                      className="ring-2 ring-surface-container-lowest"
-                    />
-                  ))}
+              {/* Incumbents Cluster & Primary Job Actions */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-surface-container-low border border-outline-variant/20">
+                  <div className="flex -space-x-2 overflow-hidden">
+                    {selectedJob.incumbents.map((inc, i) => (
+                      <UserAvatar
+                        key={i}
+                        name={inc.name}
+                        size="sm"
+                        shape="circle"
+                        className="ring-2 ring-surface-container-lowest"
+                      />
+                    ))}
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-on-surface-variant font-medium">Asignados</span>
+                    <span className="text-xs font-semibold text-on-surface">
+                      {selectedJob.activeIncumbentsCount} colaboradores
+                    </span>
+                  </div>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-outline font-bold">Personas Asignadas</span>
-                  <span className="text-xs font-bold text-on-surface">
-                    {selectedJob.activeIncumbentsCount} Asignados (100% Cobertura)
-                  </span>
+
+                {/* Direct Actions: No duplicates, No fake buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('value-map')}
+                    className="px-3 py-2 bg-surface-container-low hover:bg-surface-container text-on-surface rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border border-outline-variant/30 cursor-pointer"
+                    title="Analizar este cargo en la Cadena de Valor de Porter"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-secondary">schema</span>
+                    <span>Cadena de Valor</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCreateVacancy}
+                    className="px-3.5 py-2 bg-primary text-on-primary hover:bg-primary-container rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                    title="Abrir proceso de reclutamiento para este puesto"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">person_add</span>
+                    <span>Generar Vacante</span>
+                  </button>
                 </div>
               </div>
             </div>
 
             {/* Quick Specs Strip */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 pt-3 border-t border-outline-variant/20">
-              <div className="p-2.5 bg-surface-container-low/70 rounded-xl">
-                <span className="text-[10px] text-outline block font-bold uppercase">Área Organizacional</span>
-                <span className="text-xs font-bold text-on-surface truncate block mt-0.5">{selectedJob.department}</span>
-              </div>
-              <div className="p-2.5 bg-surface-container-low/70 rounded-xl">
-                <span className="text-[10px] text-outline block font-bold uppercase">Reporta Directamente a</span>
-                <span className="text-xs font-bold text-primary truncate block mt-0.5">{selectedJob.reportsTo}</span>
-              </div>
-              <div className="p-2.5 bg-surface-container-low/70 rounded-xl">
-                <span className="text-[10px] text-outline block font-bold uppercase">Supervisa Directamente</span>
-                <span className="text-xs font-bold text-on-surface truncate block mt-0.5">{selectedJob.supervises}</span>
-              </div>
-              <div className="p-2.5 bg-surface-container-low/70 rounded-xl">
-                <span className="text-[10px] text-outline block font-bold uppercase">Nivel Salarial / Banda</span>
-                <span className="text-xs font-bold text-on-surface truncate block mt-0.5">{selectedJob.salaryBand}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 1 & 2: Misión, Relaciones & Autoridad */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* 1. Misión Estratégica */}
-            <div className="bg-surface-container-lowest p-5 rounded-3xl shadow-xs border border-outline-variant/30 flex flex-col justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 mb-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-primary-fixed flex items-center justify-center text-primary">
-                    <span className="material-symbols-outlined text-[16px]">flag</span>
-                  </div>
-                  <h4 className="text-xs font-extrabold text-on-surface uppercase tracking-wide">1. Misión Estratégica</h4>
-                </div>
-                <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/20">
-                  <p className="text-xs text-on-surface font-medium leading-relaxed italic">
-                    &ldquo;{selectedJob.mission}&rdquo;
-                  </p>
-                </div>
-              </div>
-              <div className="pt-2 border-t border-outline-variant/20">
-                <span className="text-[10px] uppercase tracking-wider text-outline font-bold block">
-                  Vínculo con el propósito de la empresa
+              <div className="p-2.5 bg-surface-container-low/60 rounded-xl">
+                <span className="text-xs text-on-surface-variant font-medium block">Área</span>
+                <span className="text-xs font-semibold text-on-surface truncate block mt-0.5">
+                  {selectedJob.department}
                 </span>
-                <p className="text-xs text-on-surface-variant mt-0.5 leading-relaxed">{selectedJob.purposeLink}</p>
               </div>
-            </div>
-
-            {/* 2. Relaciones & Autoridad */}
-            <div className="bg-surface-container-lowest p-5 rounded-3xl shadow-xs border border-outline-variant/30 flex flex-col justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 mb-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-surface-container flex items-center justify-center text-on-surface">
-                    <span className="material-symbols-outlined text-[16px]">hub</span>
-                  </div>
-                  <h4 className="text-xs font-extrabold text-on-surface uppercase tracking-wide">2. Relaciones y Autoridad</h4>
-                </div>
-                <div className="space-y-2">
-                  <div className="p-2.5 bg-surface-container-low rounded-xl border border-outline-variant/20">
-                    <span className="text-[10px] text-primary font-bold uppercase block mb-0.5">
-                      Interacciones Internas Clave
-                    </span>
-                    <p className="text-xs text-on-surface">{selectedJob.internalRelations}</p>
-                  </div>
-                  <div className="p-2.5 bg-surface-container-low rounded-xl border border-outline-variant/20">
-                    <span className="text-[10px] text-secondary font-bold uppercase block mb-0.5">
-                      Interacciones Externas Clave
-                    </span>
-                    <p className="text-xs text-on-surface">{selectedJob.externalRelations}</p>
-                  </div>
-                </div>
+              <div className="p-2.5 bg-surface-container-low/60 rounded-xl">
+                <span className="text-xs text-on-surface-variant font-medium block">Reporta a</span>
+                <span className="text-xs font-semibold text-primary truncate block mt-0.5">
+                  {selectedJob.reportsTo}
+                </span>
               </div>
-
-              <div className="p-2.5 bg-surface-container-low rounded-xl border border-outline-variant/20">
-                <div className="flex items-center gap-1.5 text-on-surface">
-                  <span className="material-symbols-outlined text-[16px] text-primary">gavel</span>
-                  <span className="text-xs font-bold">Alcance de Autoridad Formal:</span>
-                </div>
-                <p className="text-xs text-on-surface-variant mt-0.5">{selectedJob.formalAuthority}</p>
+              <div className="p-2.5 bg-surface-container-low/60 rounded-xl">
+                <span className="text-xs text-on-surface-variant font-medium block">Supervisa</span>
+                <span className="text-xs font-semibold text-on-surface truncate block mt-0.5">
+                  {selectedJob.supervises}
+                </span>
+              </div>
+              <div className="p-2.5 bg-surface-container-low/60 rounded-xl">
+                <span className="text-xs text-on-surface-variant font-medium block">Banda salarial</span>
+                <span className="text-xs font-semibold text-on-surface truncate block mt-0.5">
+                  {selectedJob.salaryBand}
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Section 3: Responsabilidades y Estándares de Desempeño */}
-          <div className="bg-surface-container-lowest p-5 rounded-3xl shadow-xs border border-outline-variant/30 flex flex-col gap-3.5">
-            <div className="flex items-center justify-between pb-1 border-b border-outline-variant/20">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-secondary-container/40 flex items-center justify-center text-secondary">
-                  <span className="material-symbols-outlined text-[16px]">task_alt</span>
+          {/* Tab Navigation: 3 Essential Pillars */}
+          <div className="flex items-center gap-1.5 bg-surface-container-low p-1.5 rounded-2xl border border-outline-variant/20 shadow-2xs">
+            {([
+              { key: 'resumen', label: 'Resumen & Entorno', icon: 'info' },
+              { key: 'competencias', label: 'Competencias (1-5)', icon: 'psychology' },
+              { key: 'organizacion', label: 'Estructura & Desempeño', icon: 'account_tree' },
+            ] as const).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveJobTab(tab.key)}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                  activeJobTab === tab.key
+                    ? 'bg-surface-container-lowest text-primary shadow-xs ring-1 ring-primary/20 font-semibold'
+                    : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">{tab.icon}</span>
+                <span className="hidden sm:inline">{tab.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* TAB 1: Resumen & Entorno de Trabajo */}
+          {activeJobTab === 'resumen' && (
+            <div className="flex flex-col gap-5 animate-in fade-in duration-150">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* Misión Estratégica */}
+                <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col justify-between gap-3">
+                  <div>
+                    <h4 className="text-xs font-semibold text-on-surface mb-2.5 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary text-[18px]">flag</span>
+                      Misión estratégica
+                    </h4>
+                    <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/20">
+                      <p className="text-xs text-on-surface font-medium leading-relaxed italic">
+                        &ldquo;{selectedJob.mission}&rdquo;
+                      </p>
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-outline-variant/20">
+                    <span className="text-xs text-on-surface-variant font-medium block">
+                      Vínculo con el propósito institucional
+                    </span>
+                    <p className="text-xs text-outline mt-0.5 leading-relaxed">{selectedJob.purposeLink}</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs font-extrabold text-on-surface uppercase tracking-wide">
-                    3. Responsabilidades y Estándares de Desempeño
-                  </h4>
-                  <p className="text-[11px] text-outline">
-                    Entregables medibles y criterios objetivos de cumplimiento para el puesto
-                  </p>
+
+                {/* Relaciones & Autoridad */}
+                <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col justify-between gap-3">
+                  <div>
+                    <h4 className="text-xs font-semibold text-on-surface mb-2.5 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-outline text-[18px]">hub</span>
+                      Relaciones y autoridad
+                    </h4>
+                    <div className="space-y-2">
+                      <div className="p-2.5 bg-surface-container-low rounded-xl border border-outline-variant/20">
+                        <span className="text-xs text-primary font-medium block mb-0.5">
+                          Interacciones internas clave
+                        </span>
+                        <p className="text-xs text-on-surface">{selectedJob.internalRelations}</p>
+                      </div>
+                      <div className="p-2.5 bg-surface-container-low rounded-xl border border-outline-variant/20">
+                        <span className="text-xs text-on-surface-variant font-medium block mb-0.5">
+                          Interacciones externas clave
+                        </span>
+                        <p className="text-xs text-on-surface">{selectedJob.externalRelations}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-surface-container-low rounded-xl border border-outline-variant/20">
+                    <div className="flex items-center gap-1.5 text-on-surface">
+                      <span className="material-symbols-outlined text-[16px] text-primary">gavel</span>
+                      <span className="text-xs font-medium">Alcance de autoridad:</span>
+                    </div>
+                    <p className="text-xs text-on-surface-variant mt-0.5">{selectedJob.formalAuthority}</p>
+                  </div>
                 </div>
               </div>
-              <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-semibold">
-                {selectedJob.responsibilities.length} Macro-Responsabilidades
-              </span>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {selectedJob.responsibilities.map((resp, idx) => (
-                <div
-                  key={idx}
-                  className="bg-surface-container-low p-3.5 rounded-2xl flex flex-col justify-between border border-outline-variant/20"
-                >
+              {/* Condiciones del Entorno y Trabajo */}
+              <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col gap-3">
+                <div className="flex items-center gap-2 pb-1 border-b border-outline-variant/20">
+                  <span className="material-symbols-outlined text-outline text-[20px]">workspaces</span>
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[11px] font-bold text-primary px-1.5 py-0.2 bg-primary-fixed/40 rounded">
-                        {resp.number}
-                      </span>
-                      <span className="material-symbols-outlined text-[16px] text-secondary">
-                        verified
-                      </span>
-                    </div>
-                    <h5 className="text-xs font-bold text-on-surface">{resp.title}</h5>
-                    <p className="text-[11px] text-on-surface-variant mt-1 leading-relaxed">
-                      {resp.description}
+                    <h4 className="text-xs font-semibold text-on-surface">Condiciones del entorno y trabajo</h4>
+                    <p className="text-xs text-outline">
+                      Lugar de trabajo, equipamiento y esquema de presencia
                     </p>
                   </div>
-                  <div className="mt-3 pt-2 bg-surface-container-lowest p-2 rounded-xl border border-outline-variant/20">
-                    <span className="text-[9px] text-outline block font-bold uppercase">
-                      Estándar de Desempeño:
-                    </span>
-                    <span className="text-xs font-bold text-secondary flex items-center gap-1 mt-0.5">
-                      <span className="material-symbols-outlined text-[13px]">check_circle</span>
-                      {resp.standard}
-                    </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="p-3 bg-surface-container-low rounded-xl flex items-start gap-2.5 border border-outline-variant/20">
+                    <div className="p-1.5 bg-surface-container rounded-lg text-primary">
+                      <span className="material-symbols-outlined text-[18px]">laptop_mac</span>
+                    </div>
+                    <div>
+                      <span className="text-xs font-medium text-on-surface block">Modalidad</span>
+                      <span className="text-xs text-on-surface-variant mt-0.5 block">
+                        {selectedJob.workingConditions.modality}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-surface-container-low rounded-xl flex items-start gap-2.5 border border-outline-variant/20">
+                    <div className="p-1.5 bg-surface-container rounded-lg text-secondary">
+                      <span className="material-symbols-outlined text-[18px]">developer_board</span>
+                    </div>
+                    <div>
+                      <span className="text-xs font-medium text-on-surface block">Equipamiento</span>
+                      <span className="text-xs text-on-surface-variant mt-0.5 block">
+                        {selectedJob.workingConditions.tools}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-surface-container-low rounded-xl flex items-start gap-2.5 border border-outline-variant/20">
+                    <div className="p-1.5 bg-surface-container rounded-lg text-primary-container">
+                      <span className="material-symbols-outlined text-[18px]">flight_takeoff</span>
+                    </div>
+                    <div>
+                      <span className="text-xs font-medium text-on-surface block">Movilidad</span>
+                      <span className="text-xs text-on-surface-variant mt-0.5 block">
+                        {selectedJob.workingConditions.mobility}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Section 4: Condiciones de Trabajo */}
-          <div className="bg-surface-container-lowest p-5 rounded-3xl shadow-xs border border-outline-variant/30 flex flex-col gap-3">
-            <div className="flex items-center gap-2 pb-1 border-b border-outline-variant/20">
-              <div className="w-7 h-7 rounded-lg bg-surface-container flex items-center justify-center text-on-surface">
-                <span className="material-symbols-outlined text-[16px]">workspaces</span>
-              </div>
-              <div>
-                <h4 className="text-xs font-extrabold text-on-surface uppercase tracking-wide">
-                  4. Condiciones del Entorno y Trabajo
-                </h4>
-                <p className="text-[11px] text-outline">
-                  Lugar de trabajo, equipamiento y esquema de presencia
-                </p>
               </div>
             </div>
+          )}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="p-3 bg-surface-container-low rounded-2xl flex items-start gap-2.5 border border-outline-variant/20">
-                <div className="p-1.5 bg-surface-container rounded-xl text-primary">
-                  <span className="material-symbols-outlined text-[18px]">laptop_mac</span>
-                </div>
-                <div>
-                  <span className="text-xs font-bold text-on-surface block">Modalidad de trabajo</span>
-                  <span className="text-[11px] text-on-surface-variant mt-0.5 block">
-                    {selectedJob.workingConditions.modality}
-                  </span>
+          {/* TAB 2: Competencias (1-5) */}
+          {activeJobTab === 'competencias' && (
+            <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col gap-4 animate-in fade-in duration-150">
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-outline-variant/20">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-[20px]">unfold_more_double</span>
+                  <div>
+                    <h4 className="text-xs font-semibold text-on-surface">Matriz de competencias requeridas</h4>
+                    <p className="text-xs text-outline">
+                      Escala de dominio: 1 Novato &bull; 2 Aplicado &bull; 3 Autónomo &bull; 4 Avanzado &bull; 5 Experto
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              <div className="p-3 bg-surface-container-low rounded-2xl flex items-start gap-2.5 border border-outline-variant/20">
-                <div className="p-1.5 bg-surface-container rounded-xl text-secondary">
-                  <span className="material-symbols-outlined text-[18px]">developer_board</span>
-                </div>
-                <div>
-                  <span className="text-xs font-bold text-on-surface block">Herramientas y equipo</span>
-                  <span className="text-[11px] text-on-surface-variant mt-0.5 block">
-                    {selectedJob.workingConditions.tools}
-                  </span>
-                </div>
-              </div>
-
-              <div className="p-3 bg-surface-container-low rounded-2xl flex items-start gap-2.5 border border-outline-variant/20">
-                <div className="p-1.5 bg-surface-container rounded-xl text-primary-container">
-                  <span className="material-symbols-outlined text-[18px]">flight_takeoff</span>
-                </div>
-                <div>
-                  <span className="text-xs font-bold text-on-surface block">Viajes y congresos</span>
-                  <span className="text-[11px] text-on-surface-variant mt-0.5 block">
-                    {selectedJob.workingConditions.mobility}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 5: Matriz de Conocimientos, Aptitudes y Habilidades */}
-          <div className="bg-surface-container-lowest p-5 rounded-3xl shadow-xs border border-outline-variant/30 flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-outline-variant/20">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-primary-fixed flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-[16px]">unfold_more_double</span>
-                </div>
-                <div>
-                  <h4 className="text-xs font-extrabold text-on-surface uppercase tracking-wide">
-                    5. Matriz de Conocimientos, Aptitudes y Habilidades
-                  </h4>
-                  <p className="text-[11px] text-outline">
-                    Escala de dominio: 1 Novato &bull; 2 Aplicado &bull; 3 Autónomo &bull; 4 Avanzado &bull; 5 Experto
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Two Columns: Technical Skills & Soft Skills */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Technical Skills */}
-              <div className="flex flex-col gap-2.5">
-                <div className="flex items-center justify-between pb-1">
-                  <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
+              {/* Two Columns: Technical Skills & Soft Skills */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Technical Skills */}
+                <div className="flex flex-col gap-2.5">
+                  <span className="text-xs font-semibold text-on-surface flex items-center gap-1.5 pb-1">
                     <span className="material-symbols-outlined text-primary text-[16px]">memory</span>
-                    Habilidades Técnicas
+                    Habilidades técnicas
                   </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary-fixed text-primary">
-                    Técnicas clave
-                  </span>
-                </div>
 
-                {selectedJob.techSkills.map((ts, idx) => (
-                  <div
-                    key={idx}
-                    className="p-3 bg-surface-container-low rounded-2xl flex flex-col gap-1.5 border border-outline-variant/20"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-xs font-bold text-on-surface block leading-tight">{ts.name}</span>
-                        {ts.technicalName && (
-                          <span className="text-[10px] font-medium text-outline block">{ts.technicalName}</span>
-                        )}
-                      </div>
-                      <span className="text-xs font-bold text-primary bg-surface-container-lowest px-2 py-0.5 rounded-lg border border-outline-variant/20">
-                        {ts.level} / 5
-                      </span>
+                  {selectedJob.techSkills.length === 0 ? (
+                    <div className="p-4 bg-surface-container-low rounded-xl text-center text-xs text-outline">
+                      Sin competencias técnicas parametrizadas para este puesto.
                     </div>
-                    {/* 5-step progress indicator */}
-                    <div className="grid grid-cols-5 gap-1 my-0.5">
-                      {[1, 2, 3, 4, 5].map((lvl) => (
-                        <div
-                          key={lvl}
-                          className={`h-1.5 rounded-full ${
-                            lvl <= ts.level ? 'bg-primary' : 'bg-surface-container-high'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                    <div className="flex justify-between items-center text-[10px] text-outline">
-                      <span>Dominio exigido:</span>
-                      <span className="text-primary font-bold">{ts.observedBehavior}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Soft Skills */}
-              <div className="flex flex-col gap-2.5">
-                <div className="flex items-center justify-between pb-1">
-                  <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-secondary text-[16px]">diversity_3</span>
-                    Habilidades de Liderazgo y Humanas
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-secondary-container/40 text-on-secondary-container">
-                    Capital humano
-                  </span>
-                </div>
-
-                {selectedJob.softSkills.map((ss, idx) => (
-                  <div
-                    key={idx}
-                    className="p-3 bg-surface-container-low rounded-2xl flex flex-col gap-1.5 border border-outline-variant/20"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-on-surface leading-tight">{ss.name}</span>
-                      <span className="text-xs font-bold text-secondary bg-surface-container-lowest px-2 py-0.5 rounded-lg border border-outline-variant/20">
-                        {ss.level} / 5
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-5 gap-1 my-0.5">
-                      {[1, 2, 3, 4, 5].map((lvl) => (
-                        <div
-                          key={lvl}
-                          className={`h-1.5 rounded-full ${
-                            lvl <= ss.level ? 'bg-secondary' : 'bg-surface-container-high'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                    <div className="flex justify-between items-center text-[10px] text-outline">
-                      <span>Comportamiento:</span>
-                      <span className="text-on-secondary-container font-bold truncate max-w-[200px]">
-                        {ss.observedBehavior}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Section 6: Especificación Formal y Estructura Organizacional */}
-          <div className="bg-surface-container-lowest p-5 rounded-3xl shadow-xs border border-outline-variant/30 flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-outline-variant/20 pb-2.5">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-primary-fixed/70 flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-[16px]">account_tree</span>
-                </div>
-                <div>
-                  <h4 className="text-xs font-extrabold text-on-surface uppercase tracking-wide">
-                    6. Especificación y Estructura Organizacional
-                  </h4>
-                  <p className="text-[11px] text-outline">
-                    Entidades del cargo: Unidad, Jerarquía, Posiciones, Perfil y Responsabilidades
-                  </p>
-                </div>
-              </div>
-              <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-secondary-container/40 text-on-secondary-container font-bold">
-                Manual de Organización
-              </span>
-            </div>
-
-            {/* Sub-bloque A: Jerarquía y Posiciones */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="p-3 bg-surface-container-low rounded-2xl border border-outline-variant/20">
-                <span className="text-[10px] text-outline font-bold uppercase block mb-0.5">
-                  Unidad Organizacional
-                </span>
-                <span className="text-xs font-bold text-on-surface block">
-                  {selectedJob.unidad?.nombre || selectedJob.department}
-                </span>
-                <span className="text-[10px] text-outline mt-0.5 block">
-                  Depende de: {selectedJob.unidad?.unidadSuperior?.nombre || 'Dirección General'}
-                </span>
-              </div>
-
-              <div className="p-3 bg-surface-container-low rounded-2xl border border-outline-variant/20">
-                <span className="text-[10px] text-outline font-bold uppercase block mb-0.5">
-                  Puesto Superior
-                </span>
-                <span className="text-xs font-bold text-on-surface block">
-                  {selectedJob.puestoSuperior?.title || selectedJob.reportsTo}
-                </span>
-                <span className="text-[10px] text-outline mt-0.5 block">
-                  Supervisión inmediata formal
-                </span>
-              </div>
-
-              <div className="p-3 bg-surface-container-low rounded-2xl border border-outline-variant/20">
-                <span className="text-[10px] text-outline font-bold uppercase block mb-0.5">
-                  Posiciones Asignadas
-                </span>
-                <span className="text-xs font-bold text-primary block">
-                  {selectedJob.nPosiciones ?? selectedJob.activeIncumbentsCount} Plaza(s) en Estructura
-                </span>
-                <span className="text-[10px] text-outline mt-0.5 block">
-                  Plazas autorizadas para el cargo
-                </span>
-              </div>
-            </div>
-
-            {/* Sub-bloque B: Especificación del Puesto (Perfil y Responsabilidades) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {/* Perfil */}
-              <div className="p-4 bg-surface-container-low rounded-2xl border border-outline-variant/20 flex flex-col gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-primary text-[16px]">school</span>
-                  <h5 className="text-[11px] font-bold text-on-surface uppercase tracking-wider">
-                    Perfil del Cargo
-                  </h5>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold text-outline block">Educación Formal:</span>
-                  <p className="text-xs text-on-surface mt-0.5">
-                    {selectedJob.perfil?.educacionFormal || 'Educación universitaria o técnica afín al área requerida.'}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold text-outline block">Experiencia Requerida:</span>
-                  <p className="text-xs text-on-surface mt-0.5">
-                    {selectedJob.perfil?.experienciaRequerida || 'Experiencia laboral demostrable en funciones del cargo.'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Ficha de Responsabilidades */}
-              <div className="p-4 bg-surface-container-low rounded-2xl border border-outline-variant/20 flex flex-col gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-secondary text-[16px]">inventory_2</span>
-                  <h5 className="text-[11px] font-bold text-on-surface uppercase tracking-wider">
-                    Responsabilidades y Recursos
-                  </h5>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold text-outline block">Manejo de Personal:</span>
-                  <p className="text-xs text-on-surface mt-0.5">
-                    {selectedJob.responsabilidadFicha?.manejoPersonal || selectedJob.supervises}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold text-outline block">Equipo de Trabajo:</span>
-                  <p className="text-xs text-on-surface mt-0.5">
-                    {selectedJob.responsabilidadFicha?.equipoTrabajo || selectedJob.workingConditions.tools}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold text-outline block">Manejo de Información:</span>
-                  <p className="text-xs text-on-surface mt-0.5">
-                    {selectedJob.responsabilidadFicha?.manejoInformacion || 'Bases de datos y documentación reservada institucional.'}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Sub-bloque C: Funciones y Tareas Desagregadas */}
-            {selectedJob.funciones && selectedJob.funciones.length > 0 && (
-              <div className="flex flex-col gap-2.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-primary text-[16px]">format_list_numbered</span>
-                  <h5 className="text-[11px] font-bold text-on-surface uppercase tracking-wider">
-                    Funciones Principales y Tareas Operativas
-                  </h5>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {selectedJob.funciones.map((func, fIdx) => (
-                    <div
-                      key={func.id || fIdx}
-                      className="p-3 bg-surface-container-low rounded-2xl border border-outline-variant/20"
-                    >
-                      <span className="text-xs font-bold text-primary block mb-1">
-                        Función {fIdx + 1}: {func.descripcion}
-                      </span>
-                      {func.tareas && func.tareas.length > 0 && (
-                        <div className="mt-1.5 flex flex-col gap-1 pl-2 border-l-2 border-primary/30">
-                          <span className="text-[9px] uppercase font-bold text-outline">Tareas Operativas:</span>
-                          {func.tareas.map((tar, tIdx) => (
-                            <div key={tar.id || tIdx} className="text-[11px] text-on-surface-variant flex items-start gap-1">
-                              <span className="text-primary font-bold">•</span>
-                              <span>{tar.descripcion}</span>
-                            </div>
+                  ) : (
+                    selectedJob.techSkills.map((ts, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 bg-surface-container-low rounded-xl flex flex-col gap-1.5 border border-outline-variant/20"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-xs font-medium text-on-surface block leading-tight">
+                              {ts.name}
+                            </span>
+                            {ts.technicalName && (
+                              <span className="text-xs text-outline block">{ts.technicalName}</span>
+                            )}
+                          </div>
+                          <span className="text-xs font-medium text-primary">{ts.level} / 5</span>
+                        </div>
+                        {/* 5-step progress indicator */}
+                        <div className="grid grid-cols-5 gap-1 my-0.5">
+                          {[1, 2, 3, 4, 5].map((lvl) => (
+                            <div
+                              key={lvl}
+                              className={`h-1.5 rounded-full ${
+                                lvl <= ts.level ? 'bg-primary' : 'bg-surface-container-high'
+                              }`}
+                            />
                           ))}
                         </div>
-                      )}
+                        <div className="flex justify-between items-center text-xs text-outline">
+                          <span>Dominio:</span>
+                          <span className="text-primary font-medium">{ts.observedBehavior}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Soft Skills */}
+                <div className="flex flex-col gap-2.5">
+                  <span className="text-xs font-semibold text-on-surface flex items-center gap-1.5 pb-1">
+                    <span className="material-symbols-outlined text-secondary text-[16px]">diversity_3</span>
+                    Habilidades humanas y liderazgo
+                  </span>
+
+                  {selectedJob.softSkills.length === 0 ? (
+                    <div className="p-4 bg-surface-container-low rounded-xl text-center text-xs text-outline">
+                      Sin habilidades blandas parametrizadas para este puesto.
+                    </div>
+                  ) : (
+                    selectedJob.softSkills.map((ss, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 bg-surface-container-low rounded-xl flex flex-col gap-1.5 border border-outline-variant/20"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-on-surface leading-tight">{ss.name}</span>
+                          <span className="text-xs font-medium text-secondary">{ss.level} / 5</span>
+                        </div>
+                        <div className="grid grid-cols-5 gap-1 my-0.5">
+                          {[1, 2, 3, 4, 5].map((lvl) => (
+                            <div
+                              key={lvl}
+                              className={`h-1.5 rounded-full ${
+                                lvl <= ss.level ? 'bg-secondary' : 'bg-surface-container-high'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                        <div className="flex justify-between items-center text-xs text-outline">
+                          <span>Comportamiento:</span>
+                          <span className="text-on-secondary-container font-medium truncate max-w-[200px]">
+                            {ss.observedBehavior}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: Estructura & Desempeño */}
+          {activeJobTab === 'organizacion' && (
+            <div className="flex flex-col gap-5 animate-in fade-in duration-150">
+              {/* Estructura Organizacional y Jerarquía */}
+              <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col gap-4">
+                <div className="flex items-center gap-2 pb-1 border-b border-outline-variant/20">
+                  <span className="material-symbols-outlined text-primary text-[20px]">account_tree</span>
+                  <div>
+                    <h4 className="text-xs font-semibold text-on-surface">Estructura y posición organizacional</h4>
+                    <p className="text-xs text-outline">Unidad, puesto superior y plazas autorizadas</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/20">
+                    <span className="text-xs text-on-surface-variant font-medium block mb-0.5">
+                      Unidad organizacional
+                    </span>
+                    <span className="text-xs font-semibold text-on-surface block">
+                      {selectedJob.unidad?.nombre || selectedJob.department}
+                    </span>
+                    <span className="text-xs text-outline mt-0.5 block">
+                      Depende de: {selectedJob.unidad?.unidadSuperior?.nombre || 'Dirección General'}
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/20">
+                    <span className="text-xs text-on-surface-variant font-medium block mb-0.5">
+                      Puesto superior
+                    </span>
+                    <span className="text-xs font-semibold text-on-surface block">
+                      {selectedJob.puestoSuperior?.title || selectedJob.reportsTo}
+                    </span>
+                    <span className="text-xs text-outline mt-0.5 block">Supervisión inmediata</span>
+                  </div>
+
+                  <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/20">
+                    <span className="text-xs text-on-surface-variant font-medium block mb-0.5">
+                      Posiciones autorizadas
+                    </span>
+                    <span className="text-xs font-semibold text-primary block">
+                      {selectedJob.nPosiciones ?? selectedJob.activeIncumbentsCount} Plaza(s)
+                    </span>
+                    <span className="text-xs text-outline mt-0.5 block">Headcount presupuestado</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Perfil del Cargo y Recursos */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Perfil */}
+                <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col gap-2.5">
+                  <div className="flex items-center gap-1.5 pb-1 border-b border-outline-variant/20">
+                    <span className="material-symbols-outlined text-primary text-[16px]">school</span>
+                    <h5 className="text-xs font-semibold text-on-surface">Perfil del cargo</h5>
+                  </div>
+                  <div>
+                    <span className="text-xs font-medium text-outline block">Educación formal:</span>
+                    <p className="text-xs text-on-surface mt-0.5">
+                      {selectedJob.perfil?.educacionFormal ||
+                        'Educación universitaria o técnica afín al área requerida.'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-xs font-medium text-outline block">Experiencia requerida:</span>
+                    <p className="text-xs text-on-surface mt-0.5">
+                      {selectedJob.perfil?.experienciaRequerida ||
+                        'Experiencia laboral demostrable en funciones y herramientas del cargo.'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Responsabilidades de Recursos */}
+                <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col gap-2.5">
+                  <div className="flex items-center gap-1.5 pb-1 border-b border-outline-variant/20">
+                    <span className="material-symbols-outlined text-secondary text-[16px]">inventory_2</span>
+                    <h5 className="text-xs font-semibold text-on-surface">Responsabilidades y recursos</h5>
+                  </div>
+                  <div>
+                    <span className="text-xs font-medium text-outline block">Manejo de personal:</span>
+                    <p className="text-xs text-on-surface mt-0.5">
+                      {selectedJob.responsabilidadFicha?.manejoPersonal || selectedJob.supervises}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-xs font-medium text-outline block">Equipo de trabajo:</span>
+                    <p className="text-xs text-on-surface mt-0.5">
+                      {selectedJob.responsabilidadFicha?.equipoTrabajo || selectedJob.workingConditions.tools}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-xs font-medium text-outline block">Manejo de información:</span>
+                    <p className="text-xs text-on-surface mt-0.5">
+                      {selectedJob.responsabilidadFicha?.manejoInformacion ||
+                        'Bases de datos y documentación reservada institucional.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Responsabilidades y Estándares de Desempeño */}
+              <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col gap-3.5">
+                <div className="flex items-center justify-between pb-1 border-b border-outline-variant/20">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-secondary text-[20px]">task_alt</span>
+                    <div>
+                      <h4 className="text-xs font-semibold text-on-surface">
+                        Responsabilidades y estándares de desempeño
+                      </h4>
+                      <p className="text-xs text-outline">Entregables medibles y criterios de cumplimiento</p>
+                    </div>
+                  </div>
+                  <span className="text-xs text-outline font-normal">
+                    {selectedJob.responsibilities.length} entregables
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {selectedJob.responsibilities.map((resp, idx) => (
+                    <div
+                      key={idx}
+                      className="bg-surface-container-low p-3.5 rounded-xl flex flex-col justify-between border border-outline-variant/20"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-mono font-medium text-primary">#{resp.number}</span>
+                          <span className="material-symbols-outlined text-[16px] text-secondary">verified</span>
+                        </div>
+                        <h5 className="text-xs font-semibold text-on-surface">{resp.title}</h5>
+                        <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">
+                          {resp.description}
+                        </p>
+                      </div>
+                      <div className="mt-3 pt-2 bg-surface-container-lowest p-2 rounded-xl border border-outline-variant/20">
+                        <span className="text-xs text-outline block font-medium">Criterio de éxito:</span>
+                        <span className="text-xs font-medium text-secondary flex items-center gap-1 mt-0.5">
+                          <span className="material-symbols-outlined text-[13px]">check_circle</span>
+                          {resp.standard}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
-            )}
 
-            {/* Sub-bloque D: Riesgos del Cargo */}
-            {selectedJob.riesgosPuesto && selectedJob.riesgosPuesto.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-amber-600 text-[16px]">warning</span>
-                  <h5 className="text-[11px] font-bold text-on-surface uppercase tracking-wider">
-                    Riesgos Identificados del Cargo
-                  </h5>
-                </div>
-                <div className="overflow-x-auto rounded-2xl border border-outline-variant/20">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-surface-container-high text-on-surface font-bold uppercase tracking-wider text-[10px]">
-                      <tr>
-                        <th className="p-2.5">Tipo de Riesgo</th>
-                        <th className="p-2.5">Motivo / Causa</th>
-                        <th className="p-2.5">Consecuencia</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-outline-variant/10 bg-surface-container-low">
-                      {selectedJob.riesgosPuesto.map((r, rIdx) => (
-                        <tr key={r.id || rIdx} className="hover:bg-surface-container transition-colors">
-                          <td className="p-2.5 font-bold text-primary">{r.tipoRiesgo}</td>
-                          <td className="p-2.5 text-on-surface">{r.motivo}</td>
-                          <td className="p-2.5 text-on-surface-variant font-medium">{r.consecuencia}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Sub-bloque E: Relaciones de Trabajo & Estándares de Desempeño */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {/* Relaciones de Trabajo */}
-              {selectedJob.relacionesPuesto && selectedJob.relacionesPuesto.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-secondary text-[16px]">share</span>
-                    <h5 className="text-[11px] font-bold text-on-surface uppercase tracking-wider">
-                      Relaciones de Trabajo
-                    </h5>
+              {/* Funciones y Tareas Desagregadas (si existen) */}
+              {selectedJob.funciones && selectedJob.funciones.length > 0 && (
+                <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col gap-3">
+                  <div className="flex items-center gap-1.5 pb-1 border-b border-outline-variant/20">
+                    <span className="material-symbols-outlined text-primary text-[18px]">
+                      format_list_numbered
+                    </span>
+                    <h5 className="text-xs font-semibold text-on-surface">Funciones y tareas operativas</h5>
                   </div>
-                  <div className="overflow-x-auto rounded-2xl border border-outline-variant/20">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {selectedJob.funciones.map((func, fIdx) => (
+                      <div
+                        key={func.id || fIdx}
+                        className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/20"
+                      >
+                        <span className="text-xs font-semibold text-primary block mb-1">
+                          Función {fIdx + 1}: {func.descripcion}
+                        </span>
+                        {func.tareas && func.tareas.length > 0 && (
+                          <div className="mt-1.5 flex flex-col gap-1 pl-2 border-l-2 border-primary/30">
+                            <span className="text-xs text-outline font-medium">Tareas:</span>
+                            {func.tareas.map((tar, tIdx) => (
+                              <div
+                                key={tar.id || tIdx}
+                                className="text-xs text-on-surface-variant flex items-start gap-1"
+                              >
+                                <span className="text-primary font-bold">&bull;</span>
+                                <span>{tar.descripcion}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Riesgos del Cargo (si existen) */}
+              {selectedJob.riesgosPuesto && selectedJob.riesgosPuesto.length > 0 && (
+                <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border border-outline-variant/30 flex flex-col gap-3">
+                  <div className="flex items-center gap-1.5 pb-1 border-b border-outline-variant/20">
+                    <span className="material-symbols-outlined text-amber-600 text-[18px]">warning</span>
+                    <h5 className="text-xs font-semibold text-on-surface">Riesgos identificados del cargo</h5>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-outline-variant/20">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-surface-container-high text-on-surface font-bold uppercase tracking-wider text-[10px]">
+                      <thead className="bg-surface-container-high text-on-surface font-semibold text-xs">
                         <tr>
-                          <th className="p-2">Tipo</th>
-                          <th className="p-2">Puesto o Entidad</th>
-                          <th className="p-2">Propósito</th>
+                          <th className="p-2.5">Tipo de Riesgo</th>
+                          <th className="p-2.5">Motivo / Causa</th>
+                          <th className="p-2.5">Consecuencia</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-outline-variant/10 bg-surface-container-low">
-                        {selectedJob.relacionesPuesto.map((rel, rIdx) => (
-                          <tr key={rel.id || rIdx}>
-                            <td className="p-2 font-bold uppercase text-[9px] text-primary">{rel.tipo}</td>
-                            <td className="p-2 font-medium text-on-surface">{rel.puestoOInstitucion}</td>
-                            <td className="p-2 text-on-surface-variant text-[10px]">{rel.proposito}</td>
+                        {selectedJob.riesgosPuesto.map((r, rIdx) => (
+                          <tr key={r.id || rIdx} className="hover:bg-surface-container transition-colors">
+                            <td className="p-2.5 font-medium text-primary">{r.tipoRiesgo}</td>
+                            <td className="p-2.5 text-on-surface">{r.motivo}</td>
+                            <td className="p-2.5 text-on-surface-variant">{r.consecuencia}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1009,92 +1160,33 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
                   </div>
                 </div>
               )}
-
-              {/* Estándares de Desempeño */}
-              {selectedJob.estandaresDesempeno && selectedJob.estandaresDesempeno.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-primary text-[16px]">verified</span>
-                    <h5 className="text-[11px] font-bold text-on-surface uppercase tracking-wider">
-                      Estándares de Desempeño
-                    </h5>
-                  </div>
-                  <div className="p-3 bg-surface-container-low rounded-2xl border border-outline-variant/20 flex flex-col gap-1.5">
-                    {selectedJob.estandaresDesempeno.map((est, eIdx) => (
-                      <div key={est.id || eIdx} className="flex items-start gap-1.5 text-xs text-on-surface">
-                        <span className="material-symbols-outlined text-secondary text-[14px] shrink-0 mt-0.5">check_circle</span>
-                        <span className="text-[11px]">{est.descripcion}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
-          </div>
-
-          {/* Sticky Bottom Action Ribbon */}
-          <div className="sticky bottom-4 z-30 bg-surface-container-lowest/95 backdrop-blur-xl px-4 py-2.5 rounded-2xl shadow-lg border border-outline-variant/30 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              <span className="text-xs font-bold text-on-surface">Ficha validada v3.2</span>
-              <span className="hidden md:inline text-[11px] text-outline">
-                &bull; Octubre 2026
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={() => triggerToast(`Copia creada: ${selectedJob.title} (Borrador)`)}
-                className="px-3 py-1.5 bg-surface-container-low hover:bg-surface-container text-on-surface rounded-xl text-xs font-semibold flex items-center gap-1 transition-all border border-outline-variant/20 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[15px]">content_copy</span>
-                <span className="hidden sm:inline">Duplicar</span>
-              </button>
-
-              <button
-                onClick={() => onNavigate('value-map')}
-                className="px-3 py-1.5 bg-surface-container-low hover:bg-secondary-container/20 text-on-secondary-container rounded-xl text-xs font-bold flex items-center gap-1 transition-all border border-outline-variant/20 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[15px] text-secondary">schema</span>
-                <span>Cadena de Valor</span>
-              </button>
-
-              <button
-                onClick={handleCreateVacancy}
-                className="px-3 py-1.5 bg-surface-container-high hover:bg-primary-fixed text-primary rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[15px]">person_add</span>
-                <span>Generar Vacante</span>
-              </button>
-
-              <button
-                onClick={() => triggerToast(`Abriendo editor para ${selectedJob.code}`)}
-                className="px-3.5 py-1.5 bg-primary text-on-primary hover:bg-primary-container rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[15px]">edit_square</span>
-                <span>Editar Puesto</span>
-              </button>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
       {/* Modal Crear Nuevo Puesto */}
       {showNewJobModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-surface-container-lowest rounded-3xl max-w-xl w-full p-6 shadow-2xl flex flex-col gap-4 border border-outline-variant/30 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-surface-container-lowest rounded-2xl max-w-xl w-full p-6 shadow-2xl flex flex-col gap-4 border border-outline-variant/30 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between pb-2.5 border-b border-outline-variant/20">
               <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                <span className="w-8 h-8 rounded-lg bg-surface-container-high text-primary flex items-center justify-center">
                   <span className="material-symbols-outlined text-[18px]">work</span>
                 </span>
                 <div>
-                  <h3 className="text-sm font-black text-on-surface">Crear Nuevo Puesto de Trabajo</h3>
-                  <span className="text-[10px] text-outline">Incorporación de cargo al catálogo organizacional</span>
+                  <h3 className="text-sm font-bold text-on-surface">Crear Nuevo Puesto de Trabajo</h3>
+                  <span className="text-xs text-outline">Incorporación de cargo al catálogo organizacional</span>
                 </div>
               </div>
               <button
-                onClick={() => setShowNewJobModal(false)}
+                type="button"
+                onClick={() => {
+                  setShowNewJobModal(false);
+                  setJobFormSubmitted(false);
+                  setNewTitle('');
+                  setNewMission('');
+                }}
                 className="w-7 h-7 rounded-full hover:bg-surface-container flex items-center justify-center text-outline cursor-pointer"
                 title="Cerrar"
               >
@@ -1104,35 +1196,61 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
 
             <div className="flex flex-col gap-3 text-xs">
               <div>
-                <label className="text-xs font-bold text-on-surface block mb-1">
-                  Nombre del Puesto o Cargo:
+                <label className="text-xs font-semibold text-on-surface block mb-1">
+                  Nombre del Puesto o Cargo: <span className="text-error">*</span>
                 </label>
                 <input
                   type="text"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   placeholder="Ej: Desarrollador Backend Senior"
-                  className="w-full px-3 py-2 bg-surface-container-low rounded-xl text-xs text-on-surface outline-none border border-outline-variant/30 focus:border-primary font-medium"
+                  className={`w-full px-3 py-2 bg-surface-container-low rounded-xl text-xs text-on-surface outline-none border transition-colors font-medium ${
+                    jobFormSubmitted && !newTitle.trim()
+                      ? 'border-error focus:border-error ring-1 ring-error/30'
+                      : 'border-outline-variant/30 focus:border-primary'
+                  }`}
                 />
+                {jobFormSubmitted && !newTitle.trim() && (
+                  <p role="alert" className="text-xs text-error font-medium mt-1 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm" aria-hidden="true">
+                      error
+                    </span>
+                    Ingresá el nombre del puesto para continuar.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-on-surface block mb-1">Área o Departamento:</label>
+                  <label className="text-xs font-semibold text-on-surface block mb-1">
+                    Área o Departamento:
+                  </label>
                   <select
                     value={newDepartment}
                     onChange={(e) => setNewDepartment(e.target.value)}
                     className="w-full px-3 py-2 bg-surface-container-low rounded-xl text-xs text-on-surface outline-none border border-outline-variant/30 cursor-pointer"
                   >
-                    <option value="Tecnología y Plataforma">Tecnología y Plataforma</option>
-                    <option value="Inteligencia Artificial y Datos">Inteligencia Artificial y Datos</option>
-                    <option value="Operaciones e Infraestructura">Operaciones e Infraestructura</option>
-                    <option value="Recursos Humanos">Recursos Humanos</option>
-                    <option value="Ventas y Comercial">Ventas y Comercial</option>
+                    {availableAreas.length > 0 ? (
+                      availableAreas.map((dept) => (
+                        <option key={dept} value={dept}>
+                          {dept}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="Tecnología y Plataforma">Tecnología y Plataforma</option>
+                        <option value="Inteligencia Artificial y Datos">Inteligencia Artificial y Datos</option>
+                        <option value="Operaciones e Infraestructura">Operaciones e Infraestructura</option>
+                        <option value="Recursos Humanos">Recursos Humanos</option>
+                        <option value="Ventas y Comercial">Ventas y Comercial</option>
+                      </>
+                    )}
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-on-surface block mb-1">Nivel de Importancia:</label>
+                  <label className="text-xs font-semibold text-on-surface block mb-1">
+                    Nivel de Importancia:
+                  </label>
                   <select
                     value={newStatus}
                     onChange={(e) => setNewStatus(e.target.value as 'critical' | 'operational')}
@@ -1145,7 +1263,7 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
               </div>
 
               <div>
-                <label className="text-xs font-bold text-on-surface block mb-1">
+                <label className="text-xs font-semibold text-on-surface block mb-1">
                   Misión u Objetivo del Puesto:
                 </label>
                 <textarea
@@ -1161,16 +1279,21 @@ export const PuestosScreen: React.FC<PuestosScreenProps> = ({
             <div className="flex justify-end gap-2.5 pt-3 border-t border-outline-variant/20">
               <button
                 type="button"
-                onClick={() => setShowNewJobModal(false)}
-                className="px-4 py-2 rounded-xl bg-surface-container text-on-surface text-xs font-bold hover:bg-surface-container-high transition-colors cursor-pointer"
+                onClick={() => {
+                  setShowNewJobModal(false);
+                  setJobFormSubmitted(false);
+                  setNewTitle('');
+                  setNewMission('');
+                }}
+                className="px-4 py-2 rounded-xl bg-surface-container text-on-surface text-xs font-semibold hover:bg-surface-container-high transition-colors cursor-pointer"
               >
                 Cancelar
               </button>
               <button
                 type="button"
-                disabled={isSubmittingJob}
+                disabled={isSubmittingJob || (jobFormSubmitted && !newTitle.trim())}
                 onClick={handleSaveJob}
-                className="px-5 py-2.5 rounded-xl bg-primary text-on-primary text-xs font-bold shadow-xs hover:bg-primary-container transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                className="px-5 py-2.5 rounded-xl bg-primary text-on-primary text-xs font-semibold shadow-xs hover:bg-primary-container transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
               >
                 <span className="material-symbols-outlined text-sm">check</span>
                 {isSubmittingJob ? 'Guardando...' : 'Guardar Puesto'}
